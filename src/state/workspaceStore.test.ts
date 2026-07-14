@@ -160,4 +160,16 @@ describe('workspace store', () => {
 
     expect(store.getState().activeDocumentId).toBe('first')
   })
+
+  it('updates the serializable layout without touching documents', () => {
+    const store = createWorkspaceStore()
+    const first = document('first')
+    const layoutJson = { layout: { type: 'row', children: [] } }
+    store.getState().addDocuments([first])
+
+    store.getState().setLayoutJson(layoutJson)
+
+    expect(store.getState().layoutJson).toBe(layoutJson)
+    expect(store.getState().documents.first).toEqual(first)
+  })
 })

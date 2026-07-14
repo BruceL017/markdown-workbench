@@ -13,4 +13,12 @@ if (!Range.prototype.getBoundingClientRect) {
   Range.prototype.getBoundingClientRect = () => new DOMRect()
 }
 
+if (!globalThis.ResizeObserver) {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+}
+
 afterEach(cleanup)

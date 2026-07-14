@@ -27,6 +27,7 @@ export interface WorkspaceActions {
   updateDocumentText: (id: string, text: string, updatedAt?: number) => void
   setDocumentViewMode: (id: string, viewMode: ViewMode) => void
   markDocumentSaved: (id: string, options?: MarkDocumentSavedOptions) => void
+  setLayoutJson: (layoutJson: unknown) => void
   removeDocument: (id: string) => void
   restoreSnapshot: (snapshot: WorkspaceSnapshot) => void
   toSnapshot: () => WorkspaceSnapshot
@@ -121,6 +122,10 @@ export function createWorkspaceStore() {
           },
         }
       })
+    },
+
+    setLayoutJson: (layoutJson) => {
+      set({ layoutJson })
     },
 
     removeDocument: (id) => {
