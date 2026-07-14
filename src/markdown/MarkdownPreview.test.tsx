@@ -244,7 +244,7 @@ describe('MarkdownPreview', () => {
     )
 
     const anchor = screen.getByRole('link', { name: 'Section' })
-    expect(anchor).toHaveAttribute('href', '#part')
+    expect(anchor).toHaveAttribute('href', '#user-content-part')
     expect(anchor).not.toHaveAttribute('target')
 
     const web = screen.getByRole('link', { name: 'Web' })
@@ -256,14 +256,54 @@ describe('MarkdownPreview', () => {
     expect(upperWeb).toHaveAttribute('target', '_blank')
 
     fireEvent.click(screen.getByRole('link', { name: 'Sibling' }))
-    expect(onOpenDocument).toHaveBeenCalledWith('docs/guide.md', '#install')
+    expect(onOpenDocument).toHaveBeenCalledWith(
+      'docs/guide.md',
+      '#user-content-install',
+    )
 
     fireEvent.click(screen.getByRole('link', { name: 'Root' }))
-    expect(onOpenDocument).toHaveBeenCalledWith('reference/api.markdown', '#auth')
+    expect(onOpenDocument).toHaveBeenCalledWith(
+      'reference/api.markdown',
+      '#user-content-auth',
+    )
 
     expect(screen.getByRole('link', { name: 'Mail' })).toHaveAttribute(
       'href',
       'MAILTO:writer@example.com',
+    )
+  })
+
+  it('maps a local fragment to the sanitized raw element id', () => {
+    const { container } = renderPreview(
+      ['<h2 id="part">Part</h2>', '[Jump](#part)'].join('\n\n'),
+    )
+
+    const target = screen.getByRole('heading', { name: 'Part' })
+    const jump = screen.getByRole('link', { name: 'Jump' })
+    expect(target).toHaveAttribute('id', 'user-content-part')
+    expect(jump).toHaveAttribute('href', '#user-content-part')
+    expect(container.querySelector(jump.getAttribute('href')!)).toBe(target)
+  })
+
+  it('passes a cross-document hash that selects the sanitized target', () => {
+    const onOpenDocument = vi.fn()
+    const source = renderPreview('[Install](guide.md#install)', { onOpenDocument })
+
+    fireEvent.click(screen.getByRole('link', { name: 'Install' }))
+
+    expect(onOpenDocument).toHaveBeenCalledWith(
+      'docs/guide.md',
+      '#user-content-install',
+    )
+    const callbackHash = onOpenDocument.mock.calls[0]?.[1]
+    if (!callbackHash) throw new Error('Expected a callback hash')
+
+    source.unmount()
+    const target = renderPreview('<h2 id="install">Install target</h2>', {
+      currentDocumentPath: 'docs/guide.md',
+    })
+    expect(target.container.querySelector(callbackHash)).toBe(
+      screen.getByRole('heading', { name: 'Install target' }),
     )
   })
 

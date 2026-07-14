@@ -17,7 +17,7 @@ export interface MarkdownPreviewProps {
   currentDocumentPath: string
   assetRegistry: AssetRegistry
   ariaLabel?: string
-  onOpenDocument?: (path: string, hash?: string) => void
+  onOpenDocument?: (path: string, sanitizedHash?: string) => void
 }
 
 const removedTags = new Set(['picture', 'source'])
@@ -71,6 +71,11 @@ const sanitizeSchema: SanitizeSchema = {
     src: [...webProtocols, ...protocolVariants('data')],
   },
   strip: ['script', 'style', 'iframe', 'object', 'embed', 'form'],
+}
+
+function toSanitizedPreviewHash(sourceHash: string) {
+  if (!sourceHash.startsWith('#') || sourceHash === '#') return sourceHash
+  return `#${sanitizeSchema.clobberPrefix ?? ''}${sourceHash.slice(1)}`
 }
 
 const safeDataImagePattern =
@@ -249,7 +254,11 @@ function MarkdownLink({
 
   const targetValue = href.trim()
   if (targetValue.startsWith('#')) {
-    return <a {...semanticProps} href={targetValue}>{children}</a>
+    return (
+      <a {...semanticProps} href={toSanitizedPreviewHash(targetValue)}>
+        {children}
+      </a>
+    )
   }
 
   const target = targetValue.startsWith('/')
@@ -278,12 +287,16 @@ function MarkdownLink({
   }
 
   const isMarkdownDocument = /\.(?:md|markdown)$/i.test(target.path)
-  const handleClick = isMarkdownDocument && onOpenDocument
-    ? (event: MouseEvent<HTMLAnchorElement>) => {
-        event.preventDefault()
-        onOpenDocument(target.path, target.hash || undefined)
-      }
-    : undefined
+  const handleClick =
+    isMarkdownDocument && onOpenDocument
+      ? (event: MouseEvent<HTMLAnchorElement>) => {
+          event.preventDefault()
+          onOpenDocument(
+            target.path,
+            target.hash ? toSanitizedPreviewHash(target.hash) : undefined,
+          )
+        }
+      : undefined
 
   return (
     <a {...semanticProps} href={targetValue} onClick={handleClick}>
