@@ -21,29 +21,43 @@ export type ResourceTarget =
   | RejectedResourceTarget
 
 const schemePattern = /^[a-z][a-z\d+.-]*:/i
-const drivePathPattern = /^[a-z]:($|\/)/i
+const drivePathPattern = /^[a-z]:/i
 
 export function normalizeWorkspacePath(path: string): string {
-  if (!path || path.startsWith('/') || drivePathPattern.test(path)) {
-    throw new Error('Workspace paths must be relative')
-  }
-  if (path.includes('\\')) {
-    throw new Error('Workspace paths must use POSIX separators')
-  }
+  assertSafeRoot(path)
+  const normalizedPath = foldPathSegments(path, false)
+  assertSafeRoot(normalizedPath)
+  return normalizedPath
+}
 
+function foldPathSegments(path: string, allowLeadingParents: boolean): string {
   const segments: string[] = []
   for (const segment of path.split('/')) {
     if (!segment || segment === '.') continue
     if (segment === '..') {
-      if (segments.length === 0) throw new Error('Path escapes the workspace root')
-      segments.pop()
+      const previous = segments.at(-1)
+      if (previous && previous !== '..') {
+        segments.pop()
+      } else if (allowLeadingParents) {
+        segments.push(segment)
+      } else {
+        throw new Error('Path escapes the workspace root')
+      }
       continue
     }
     segments.push(segment)
   }
 
-  if (segments.length === 0) throw new Error('Workspace path is empty')
   return segments.join('/')
+}
+
+function assertSafeRoot(path: string) {
+  if (!path || path.startsWith('/')) throw new Error('Workspace paths must be relative')
+  if (path.includes('\\')) throw new Error('Workspace paths must use POSIX separators')
+  if (drivePathPattern.test(path)) throw new Error('Windows drive paths are not supported')
+
+  const scheme = path.match(schemePattern)?.[0].slice(0, -1).toLowerCase()
+  if (scheme) throw new Error(`Unsupported URL scheme: ${scheme}`)
 }
 
 function rejected(error: unknown): RejectedResourceTarget {
@@ -90,12 +104,12 @@ export function resolveResourceTarget(
       .split('/')
       .map((segment) => decodeURIComponent(segment))
       .join('/')
-    if (decodedPath.startsWith('/') || drivePathPattern.test(decodedPath)) {
-      throw new Error('Resource paths must be relative')
-    }
+    assertSafeRoot(decodedPath)
+    const normalizedTarget = foldPathSegments(decodedPath, true)
+    if (normalizedTarget) assertSafeRoot(normalizedTarget)
     const markdownDirectory = markdownPath.split('/').slice(0, -1).join('/')
     const path = normalizeWorkspacePath(
-      markdownDirectory ? `${markdownDirectory}/${decodedPath}` : decodedPath,
+      markdownDirectory ? `${markdownDirectory}/${normalizedTarget}` : normalizedTarget,
     )
 
     return { kind: 'local', path, query: target.query, hash: target.hash }

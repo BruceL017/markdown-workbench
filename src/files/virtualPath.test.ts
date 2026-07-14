@@ -7,7 +7,15 @@ describe('normalizeWorkspacePath', () => {
     expect(normalizeWorkspacePath('notes//drafts/./post.md')).toBe('notes/drafts/post.md')
   })
 
-  it.each(['../outside.png', '/etc/passwd', 'C:/secret.txt', 'notes\\image.png'])(
+  it.each([
+    '../outside.png',
+    '/etc/passwd',
+    'C:/secret.txt',
+    'C:secret.txt',
+    'dir/../C:secret.txt',
+    'file:asset.png',
+    'notes\\image.png',
+  ])(
     'rejects unsafe path %s',
     (path) => {
       expect(() => normalizeWorkspacePath(path)).toThrow()
@@ -72,6 +80,42 @@ describe('resolveResourceTarget', () => {
     expect(resolveResourceTarget('notes/post.md', target)).toMatchObject({
       kind: 'rejected',
       reason: expect.any(String),
+    })
+  })
+
+  it.each([
+    'C:foo',
+    'C%3Afoo',
+    'c%3afoo',
+    './c%3A%5Cfoo',
+    './C:foo',
+    'dir/../C:foo',
+    '../C%3Afoo',
+    'file%3A/tmp/image.png',
+    'FiLe%3a%5Ctmp%5Cimage.png',
+    'javascript%3Aalert(1)',
+    './JAVASCRIPT%3aalert(1)',
+    'mailto%3Atest@example.com',
+    'https%3A//example.com/image.png',
+  ])('rejects an encoded or normalized dangerous root %s', (target) => {
+    expect(resolveResourceTarget('notes/post.md', target)).toMatchObject({
+      kind: 'rejected',
+      reason: expect.any(String),
+    })
+  })
+
+  it('allows colons in non-root file names', () => {
+    expect(resolveResourceTarget('notes/post.md', 'images/name:variant.png')).toEqual({
+      kind: 'local',
+      path: 'notes/images/name:variant.png',
+      query: '',
+      hash: '',
+    })
+    expect(resolveResourceTarget('notes/post.md', 'images/C:variant.png')).toEqual({
+      kind: 'local',
+      path: 'notes/images/C:variant.png',
+      query: '',
+      hash: '',
     })
   })
 
