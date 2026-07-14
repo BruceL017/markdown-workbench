@@ -2,6 +2,7 @@ import { createStore } from 'zustand/vanilla'
 
 import type {
   DiskFingerprint,
+  ThemePreference,
   ViewMode,
   WorkspaceDocument,
   WorkspaceSnapshot,
@@ -18,7 +19,7 @@ export interface WorkspaceState {
   documentOrder: string[]
   activeDocumentId: string | null
   layoutJson?: unknown
-  theme?: 'system' | 'light' | 'dark'
+  theme: ThemePreference
 }
 
 export interface WorkspaceActions {
@@ -28,7 +29,9 @@ export interface WorkspaceActions {
   setDocumentViewMode: (id: string, viewMode: ViewMode) => void
   markDocumentSaved: (id: string, options?: MarkDocumentSavedOptions) => void
   setLayoutJson: (layoutJson: unknown) => void
+  setTheme: (theme: ThemePreference) => void
   removeDocument: (id: string) => void
+  resetWorkspace: () => void
   restoreSnapshot: (snapshot: WorkspaceSnapshot) => void
   toSnapshot: () => WorkspaceSnapshot
 }
@@ -43,6 +46,7 @@ export function createWorkspaceStore() {
     documents: {},
     documentOrder: [],
     activeDocumentId: null,
+    theme: 'system',
 
     addDocuments: (incomingDocuments) => {
       set((state) => {
@@ -128,6 +132,10 @@ export function createWorkspaceStore() {
       set({ layoutJson })
     },
 
+    setTheme: (theme) => {
+      set({ theme })
+    },
+
     removeDocument: (id) => {
       set((state) => {
         if (!hasOwn(state.documents, id)) return state
@@ -144,6 +152,16 @@ export function createWorkspaceStore() {
         }
 
         return { documents, documentOrder, activeDocumentId }
+      })
+    },
+
+    resetWorkspace: () => {
+      set({
+        documents: {},
+        documentOrder: [],
+        activeDocumentId: null,
+        layoutJson: undefined,
+        theme: 'system',
       })
     },
 
@@ -165,7 +183,7 @@ export function createWorkspaceStore() {
             ? snapshot.activeDocumentId
             : null,
         layoutJson: snapshot.layoutJson,
-        theme: snapshot.theme,
+        theme: snapshot.theme ?? 'system',
       })
     },
 
@@ -176,7 +194,7 @@ export function createWorkspaceStore() {
         documents: state.documentOrder.map((id) => state.documents[id]),
         activeDocumentId: state.activeDocumentId,
         ...(state.layoutJson === undefined ? {} : { layoutJson: state.layoutJson }),
-        ...(state.theme === undefined ? {} : { theme: state.theme }),
+        theme: state.theme,
       }
     },
   }))

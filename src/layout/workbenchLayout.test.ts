@@ -11,6 +11,7 @@ import {
   normalizeLayoutJson,
   removeDocumentPane,
   replaceDocumentInPane,
+  restoreWorkspaceModel,
   serializeWorkbenchLayout,
   visibleDocumentIds,
 } from './workbenchLayout'
@@ -121,5 +122,56 @@ describe('workbench layout', () => {
 
     expect(visibleDocumentIds(model)).toEqual(['two'])
     expect(activeDocumentId(model)).toBe('two')
+  })
+
+  it('restores valid panes while dropping unknown and duplicate documents', () => {
+    const model = createWorkbenchModel(document('one'))
+    addDocumentSplit(model, document('two'), 'right')
+    const json = model.toJson()
+    const secondPane = json.layout.children?.[1]
+    if (!secondPane || secondPane.type !== 'tabset') throw new Error('Expected second pane')
+    secondPane.weight = 37
+    secondPane.children = [
+      ...(secondPane.children ?? []),
+      {
+        type: 'tab',
+        id: 'duplicate-one',
+        name: 'duplicate',
+        component: 'document',
+        config: { documentId: 'one' },
+      },
+      {
+        type: 'tab',
+        id: 'unknown',
+        name: 'unknown',
+        component: 'document',
+        config: { documentId: 'unknown' },
+      },
+    ]
+
+    const restored = restoreWorkspaceModel(json, [document('one'), document('two')], 'two')
+
+    expect(visibleDocumentIds(restored)).toEqual(['one', 'two'])
+    expect(activeDocumentId(restored)).toBe('two')
+    expect(restored.toJson().layout.children?.[1]?.weight).toBe(37)
+  })
+
+  it('falls back to the preferred document for corrupt or stale layouts', () => {
+    const documents = [document('one'), document('two')]
+    const corrupt = restoreWorkspaceModel({ invalid: true }, documents, 'two')
+    const stale = createWorkbenchModel(document('one')).toJson()
+    const tabset = stale.layout.children?.[0]
+    if (!tabset || tabset.type !== 'tabset') throw new Error('Expected tabset')
+    tabset.children = [
+      {
+        type: 'tab',
+        name: 'missing',
+        component: 'document',
+        config: { documentId: 'missing' },
+      },
+    ]
+
+    expect(visibleDocumentIds(corrupt)).toEqual(['two'])
+    expect(visibleDocumentIds(restoreWorkspaceModel(stale, documents, 'two'))).toEqual(['two'])
   })
 })

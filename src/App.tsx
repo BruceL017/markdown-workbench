@@ -7,11 +7,13 @@ import {
   Files,
   FloppyDisk,
   FolderOpen,
+  Gear,
   ShieldCheck,
   X,
 } from '@phosphor-icons/react'
 import {
   Layout,
+  type Model,
   TabNode,
   type Action,
   type ITabRenderValues,
@@ -42,11 +44,15 @@ import {
   paneIdForDocument,
   removeDocumentPane,
   replaceDocumentInPane,
+  restoreWorkspaceModel,
   serializeWorkbenchLayout,
   type SplitDirection,
   visibleDocumentIds,
 } from './layout/workbenchLayout'
 import { DebouncedMarkdownPreview } from './markdown/DebouncedMarkdownPreview'
+import { createWorkspaceSession, type WorkspaceSession } from './session/workspaceSession'
+import { ClearLocalDataDialog, SettingsDialog } from './settings/PrivacySettings'
+import { useWorkspaceTheme, type ResolvedTheme } from './theme/useWorkspaceTheme'
 import { scrollToDocumentAnchor } from './workbench/previewNavigation'
 import { createWorkbenchRuntime, type WorkbenchRuntime } from './workbench/runtime'
 import { useModalFocus } from './workbench/useModalFocus'
@@ -76,16 +82,101 @@ const splitActions: Array<{
 
 export function App({ runtime: suppliedRuntime }: AppProps) {
   const [runtime] = useState(() => suppliedRuntime ?? createWorkbenchRuntime())
+  const [sessionFailure, setSessionFailure] = useState<{ message: string } | null>(null)
+  const [session] = useState(() => createWorkspaceSession(runtime, {
+    onError: (error) => {
+      setSessionFailure({
+        message: messageForError(error, 'Local recovery data could not be saved.'),
+      })
+    },
+  }))
   const workspace = useSyncExternalStore(
     runtime.store.subscribe,
     runtime.store.getState,
     runtime.store.getState,
   )
-  const [model] = useState(() => {
+  const [model, setModel] = useState<Model | null>(() => {
+    if (runtime.persistence) return null
     const firstId = runtime.store.getState().documentOrder[0]
-    const first = firstId ? runtime.store.getState().documents[firstId] : undefined
-    return createWorkbenchModel(first)
+    const documents = runtime.store.getState().documentOrder.map(
+      (id) => runtime.store.getState().documents[id],
+    )
+    return restoreWorkspaceModel(
+      runtime.store.getState().layoutJson,
+      documents,
+      firstId ?? null,
+    )
   })
+  const resolvedTheme = useWorkspaceTheme(workspace.theme)
+
+  useEffect(() => {
+    if (model) {
+      session.start()
+      const flush = () => void session.flush().catch(() => undefined)
+      const flushWhenHidden = () => {
+        if (document.visibilityState === 'hidden') flush()
+      }
+      globalThis.addEventListener('pagehide', flush)
+      document.addEventListener('visibilitychange', flushWhenHidden)
+      return () => {
+        globalThis.removeEventListener('pagehide', flush)
+        document.removeEventListener('visibilitychange', flushWhenHidden)
+        session.dispose()
+      }
+    }
+
+    let active = true
+    void session.hydrate().then(({ model: restoredModel }) => {
+      if (active) setModel(restoredModel)
+    })
+    return () => {
+      active = false
+    }
+  }, [model, session])
+
+  if (!model) {
+    return (
+      <div className="bootstrap-state" role="status" aria-live="polite">
+        Restoring local workspace…
+      </div>
+    )
+  }
+
+  return (
+    <WorkbenchApp
+      runtime={runtime}
+      model={model}
+      session={session}
+      resolvedTheme={resolvedTheme}
+      sessionFailure={sessionFailure}
+      onClearLocalData={async () => {
+        await session.clear()
+        setModel(createWorkbenchModel())
+      }}
+    />
+  )
+}
+
+function WorkbenchApp({
+  runtime,
+  model,
+  session,
+  resolvedTheme,
+  sessionFailure,
+  onClearLocalData,
+}: {
+  runtime: WorkbenchRuntime
+  model: Model
+  session: WorkspaceSession
+  resolvedTheme: ResolvedTheme
+  sessionFailure: { message: string } | null
+  onClearLocalData: () => Promise<void>
+}) {
+  const workspace = useSyncExternalStore(
+    runtime.store.subscribe,
+    runtime.store.getState,
+    runtime.store.getState,
+  )
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [busyAction, setBusyAction] = useState<'files' | 'folder' | null>(null)
   const [savingDocumentId, setSavingDocumentId] = useState<string | null>(null)
@@ -95,9 +186,20 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [desktop, setDesktop] = useState(() => globalThis.innerWidth >= 1024)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [clearConfirmation, setClearConfirmation] = useState(false)
+  const [clearing, setClearing] = useState(false)
   const fileButtonRef = useRef<HTMLButtonElement>(null)
+  const settingsButtonRef = useRef<HTMLButtonElement>(null)
 
   const syncLayout = useCallback(() => {
+    if (
+      runtime.store.getState().documentOrder.length === 0 &&
+      visibleDocumentIds(model).length === 0
+    ) {
+      runtime.store.getState().setActiveDocument(null)
+      return
+    }
     runtime.store.getState().setLayoutJson(serializeWorkbenchLayout(model))
     runtime.store.getState().setActiveDocument(activeDocumentId(model))
   }, [model, runtime])
@@ -105,6 +207,10 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
   useEffect(() => {
     syncLayout()
   }, [syncLayout])
+
+  useEffect(() => {
+    if (sessionFailure) setError(sessionFailure.message)
+  }, [sessionFailure])
 
   useEffect(() => {
     const onResize = () => setDesktop(globalThis.innerWidth >= 1024)
@@ -213,6 +319,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         resultDocuments.push(incoming)
       }
 
+      await session.persistHandles(openedDocuments)
       runtime.store.getState().addDocuments(openedDocuments)
       const first = resultDocuments[0]
       if (first) {
@@ -227,7 +334,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
           : `Opened ${resultDocuments.length} Markdown files.`,
       )
     },
-    [model, runtime, syncLayout],
+    [model, runtime, session, syncLayout],
   )
 
   const performSave = useCallback(
@@ -536,6 +643,31 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
             <ShieldCheck aria-hidden />
             {directSave ? 'Direct save' : 'Download save'}
           </span>
+          <label className="theme-control">
+            <span>Theme</span>
+            <select
+              aria-label="Theme"
+              value={workspace.theme}
+              onChange={(event) => runtime.store.getState().setTheme(
+                event.currentTarget.value as 'system' | 'light' | 'dark',
+              )}
+            >
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <button
+            ref={settingsButtonRef}
+            type="button"
+            className="icon-button"
+            aria-label="Privacy and local data"
+            title="Privacy and local data"
+            aria-haspopup="dialog"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <Gear aria-hidden />
+          </button>
           <button
             ref={fileButtonRef}
             type="button"
@@ -560,7 +692,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         {visibleIds.length === 0 ? (
           <EmptyWorkspace busyAction={busyAction} onOpen={openLocal} />
         ) : desktop ? (
-          <div className="workbench-layout flexlayout__theme_light">
+          <div className={`workbench-layout flexlayout__theme_${resolvedTheme}`}>
             <Layout
               model={model}
               factory={factory}
@@ -593,6 +725,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
           activeDocumentId={activeId}
           busyAction={busyAction}
           nativeDirectory={runtime.nativeAdapter.capabilities.openDirectory}
+          canSplit={desktop}
           onClose={closeDrawer}
           onOpen={openLocal}
           onSelect={(documentId) => {
@@ -630,6 +763,40 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
           onDiscard={() => closePane(closeRequest)}
           onSave={() => void saveAndClose()}
           returnFocusRef={fileButtonRef}
+        />
+      ) : null}
+
+      {settingsOpen ? (
+        <SettingsDialog
+          directSave={directSave}
+          onClose={() => setSettingsOpen(false)}
+          onClear={() => {
+            setSettingsOpen(false)
+            setClearConfirmation(true)
+          }}
+          returnFocusRef={settingsButtonRef}
+        />
+      ) : null}
+
+      {clearConfirmation ? (
+        <ClearLocalDataDialog
+          dirty={hasDirtyDocuments}
+          busy={clearing}
+          onCancel={() => setClearConfirmation(false)}
+          onClear={async () => {
+            setClearing(true)
+            setError('')
+            try {
+              await onClearLocalData()
+              setClearConfirmation(false)
+              setMessage('Local recovery data was cleared.')
+            } catch (clearError) {
+              setError(messageForError(clearError, 'Could not clear local data.'))
+            } finally {
+              setClearing(false)
+            }
+          }}
+          returnFocusRef={settingsButtonRef}
         />
       ) : null}
     </main>
@@ -685,6 +852,7 @@ function FileDrawer({
   activeDocumentId,
   busyAction,
   nativeDirectory,
+  canSplit,
   onClose,
   onOpen,
   onSelect,
@@ -696,6 +864,7 @@ function FileDrawer({
   activeDocumentId: string | null
   busyAction: 'files' | 'folder' | null
   nativeDirectory: boolean
+  canSplit: boolean
   onClose: () => void
   onOpen: (kind: 'files' | 'folder') => void
   onSelect: (documentId: string) => void
@@ -780,21 +949,23 @@ function FileDrawer({
                     </span>
                     {visible ? <span className="visible-label">Visible</span> : null}
                   </button>
-                  <div className="file-split-actions" role="group" aria-label={`Split ${document.name}`}>
-                    {splitActions.map(({ direction, label, icon }) => (
-                      <button
-                        key={direction}
-                        type="button"
-                        className="icon-button"
-                        aria-label={`Open ${document.name} in ${label} split`}
-                        title={`Open in ${label} split`}
-                        disabled={visible}
-                        onClick={() => onSplit(document.id, direction)}
-                      >
-                        {icon}
-                      </button>
-                    ))}
-                  </div>
+                  {canSplit ? (
+                    <div className="file-split-actions" role="group" aria-label={`Split ${document.name}`}>
+                      {splitActions.map(({ direction, label, icon }) => (
+                        <button
+                          key={direction}
+                          type="button"
+                          className="icon-button"
+                          aria-label={`Open ${document.name} in ${label} split`}
+                          title={`Open in ${label} split`}
+                          disabled={visible}
+                          onClick={() => onSplit(document.id, direction)}
+                        >
+                          {icon}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </li>
               )
             })}

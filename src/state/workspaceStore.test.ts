@@ -172,4 +172,23 @@ describe('workspace store', () => {
     expect(store.getState().layoutJson).toBe(layoutJson)
     expect(store.getState().documents.first).toEqual(first)
   })
+
+  it('persists theme preference and resets workspace data to defaults', () => {
+    const store = createWorkspaceStore()
+    store.getState().addDocuments([document('first')])
+    store.getState().setLayoutJson({ layout: 'saved' })
+    store.getState().setTheme('dark')
+
+    expect(store.getState().toSnapshot().theme).toBe('dark')
+
+    store.getState().resetWorkspace()
+
+    expect(store.getState()).toMatchObject({
+      documents: {},
+      documentOrder: [],
+      activeDocumentId: null,
+      layoutJson: undefined,
+      theme: 'system',
+    })
+  })
 })

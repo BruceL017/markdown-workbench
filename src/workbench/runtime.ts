@@ -7,6 +7,10 @@ import {
 } from '../files/nativeFileAdapter'
 import { FallbackFileAdapter } from '../files/fallbackFileAdapter'
 import { createWorkspaceStore } from '../state/workspaceStore'
+import {
+  createWorkspacePersistence,
+  type WorkspacePersistence,
+} from '../persistence/indexedDbWorkspace'
 
 export interface WorkbenchRuntime {
   store: ReturnType<typeof createWorkspaceStore>
@@ -14,11 +18,20 @@ export interface WorkbenchRuntime {
   nativeHandleRegistry: FileHandleRegistry
   nativeAdapter: FileAdapter
   fallbackAdapter: FileAdapter
+  persistence?: WorkspacePersistence
 }
 
-export function createWorkbenchRuntime(): WorkbenchRuntime {
-  const assetRegistry = new AssetRegistry()
-  const handleRegistry = new InMemoryFileHandleRegistry()
+interface WorkbenchRuntimeOptions {
+  assetRegistry?: AssetRegistry
+  handleRegistry?: FileHandleRegistry
+  persistence?: WorkspacePersistence
+}
+
+export function createWorkbenchRuntime(
+  options: WorkbenchRuntimeOptions = {},
+): WorkbenchRuntime {
+  const assetRegistry = options.assetRegistry ?? new AssetRegistry()
+  const handleRegistry = options.handleRegistry ?? new InMemoryFileHandleRegistry()
 
   return {
     store: createWorkspaceStore(),
@@ -26,5 +39,6 @@ export function createWorkbenchRuntime(): WorkbenchRuntime {
     nativeHandleRegistry: handleRegistry,
     nativeAdapter: new NativeFileAdapter({ assetRegistry, handleRegistry }),
     fallbackAdapter: new FallbackFileAdapter({ assetRegistry }),
+    persistence: options.persistence ?? createWorkspacePersistence(),
   }
 }

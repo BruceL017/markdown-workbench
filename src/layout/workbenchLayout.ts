@@ -66,6 +66,34 @@ export function restoreWorkbenchModel(json: IJsonModel): Model {
   return configureWorkbenchModel(Model.fromJson(normalizeLayoutJson(json)))
 }
 
+export function restoreWorkspaceModel(
+  input: unknown,
+  documents: WorkspaceDocument[],
+  preferredDocumentId: string | null = null,
+): Model {
+  const preferred = documents.find((document) => document.id === preferredDocumentId)
+    ?? documents[0]
+  if (!isJsonModel(input)) return createWorkbenchModel(preferred)
+
+  try {
+    const validDocumentIds = new Set(documents.map((document) => document.id))
+    const model = configureWorkbenchModel(
+      Model.fromJson(normalizeLayoutJson(input, validDocumentIds)),
+    )
+    const visibleIds = visibleDocumentIds(model)
+    if (visibleIds.length === 0) return createWorkbenchModel(preferred)
+    const preferredFocused = preferredDocumentId
+      ? focusDocument(model, preferredDocumentId)
+      : false
+    if (!preferredFocused && !activeDocumentId(model)) {
+      focusDocument(model, visibleIds[0])
+    }
+    return model
+  } catch {
+    return createWorkbenchModel(preferred)
+  }
+}
+
 export function configureWorkbenchModel(model: Model): Model {
   model.setOnAllowDrop((_dragNode, dropInfo) => dropInfo.location !== DockLocation.CENTER)
   return model
@@ -188,7 +216,10 @@ export function serializeWorkbenchLayout(model: Model): IJsonModel {
   return normalizeLayoutJson(model.toJson())
 }
 
-export function normalizeLayoutJson(input: IJsonModel): IJsonModel {
+export function normalizeLayoutJson(
+  input: IJsonModel,
+  validDocumentIds?: ReadonlySet<string>,
+): IJsonModel {
   const json = structuredClone(input)
   const seenDocuments = new Set<string>()
   let paneIndex = 0
@@ -202,7 +233,7 @@ export function normalizeLayoutJson(input: IJsonModel): IJsonModel {
       }
 
       paneIndex += 1
-      return normalizeTabset(child, seenDocuments, paneIndex)
+      return normalizeTabset(child, seenDocuments, paneIndex, validDocumentIds)
     })
   }
 
@@ -222,10 +253,15 @@ function normalizeTabset(
   tabset: IJsonTabSetNode,
   seenDocuments: Set<string>,
   paneIndex: number,
+  validDocumentIds?: ReadonlySet<string>,
 ): IJsonTabSetNode {
   const child = (tabset.children ?? []).find((candidate) => {
     const documentId = documentIdFromJson(candidate)
-    return Boolean(documentId && !seenDocuments.has(documentId))
+    return Boolean(
+      documentId &&
+      !seenDocuments.has(documentId) &&
+      (!validDocumentIds || validDocumentIds.has(documentId)),
+    )
   })
   if (child) {
     seenDocuments.add(documentIdFromJson(child) as string)
@@ -239,6 +275,12 @@ function normalizeTabset(
     selected: children.length ? 0 : undefined,
     children,
   }
+}
+
+function isJsonModel(input: unknown): input is IJsonModel {
+  if (!input || typeof input !== 'object') return false
+  const layout = (input as { layout?: unknown }).layout
+  return Boolean(layout && typeof layout === 'object' && (layout as { type?: unknown }).type === 'row')
 }
 
 function emptyTabset(index: number): IJsonTabSetNode {
