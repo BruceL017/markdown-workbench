@@ -27,6 +27,7 @@ export type SaveResult =
   | { status: 'written'; fingerprint: DiskFingerprint }
   | { status: 'downloaded'; filename: string }
   | { status: 'conflict'; fingerprint: DiskFingerprint; diskText: string }
+  | { status: 'permission-required' }
   | { status: 'permission-denied' }
   | { status: 'unavailable' }
 
@@ -35,6 +36,7 @@ export interface FileAdapter {
   openFiles(): Promise<OpenResult>
   openDirectory(): Promise<OpenResult>
   save(document: WorkspaceDocument, options?: SaveOptions): Promise<SaveResult>
+  requestWritePermission(document: WorkspaceDocument): Promise<PermissionState>
 }
 
 export function createEmptyOpenResult(): OpenResult {

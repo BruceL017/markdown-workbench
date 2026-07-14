@@ -85,6 +85,10 @@ export class FallbackFileAdapter implements FileAdapter {
     return { status: 'downloaded', filename: document.name }
   }
 
+  async requestWritePermission(_document: WorkspaceDocument): Promise<PermissionState> {
+    return 'denied'
+  }
+
   private async openSelectedFiles(files: File[], directory: boolean): Promise<OpenResult> {
     const result = createEmptyOpenResult()
 

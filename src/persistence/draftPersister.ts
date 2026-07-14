@@ -7,32 +7,46 @@ export interface DraftPersister<T> {
 export function createDraftPersister<T>(
   save: (snapshot: T) => Promise<void>,
   delay = 750,
+  onError?: (error: unknown, snapshot: T) => void,
 ): DraftPersister<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   let pending: T
   let hasPending = false
   let inFlight: Promise<void> | undefined
+  let revision = 0
 
-  async function savePending() {
+  async function savePending(reportError = false) {
     timer = undefined
     if (!hasPending) {
       return inFlight
     }
 
     const snapshot = pending
+    const snapshotRevision = revision
     hasPending = false
     const previous = inFlight?.catch(() => undefined)
     const operation = (previous ?? Promise.resolve()).then(() => save(snapshot))
     inFlight = operation
-    const clearInFlight = () => {
+
+    try {
+      await operation
+    } catch (error) {
+      if (revision === snapshotRevision) {
+        pending = snapshot
+        hasPending = true
+      }
+      if (reportError) {
+        onError?.(error, snapshot)
+      }
+      throw error
+    } finally {
       if (inFlight === operation) inFlight = undefined
     }
-    void operation.then(clearInFlight, clearInFlight)
-    await operation
   }
 
   return {
     schedule(snapshot) {
+      revision += 1
       pending = snapshot
       hasPending = true
 
@@ -40,7 +54,7 @@ export function createDraftPersister<T>(
         clearTimeout(timer)
       }
       timer = setTimeout(() => {
-        void savePending().catch(() => undefined)
+        void savePending(true).catch(() => undefined)
       }, delay)
     },
 
@@ -56,6 +70,7 @@ export function createDraftPersister<T>(
         clearTimeout(timer)
       }
       timer = undefined
+      revision += 1
       hasPending = false
     },
   }

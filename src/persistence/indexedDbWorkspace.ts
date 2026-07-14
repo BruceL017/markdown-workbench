@@ -29,6 +29,7 @@ export interface WorkspacePersistence {
   loadWorkspace(): Promise<WorkspaceSnapshot | null>
   saveHandle(handleKey: string, handle: FileSystemHandle): Promise<void>
   loadHandle(handleKey: string): Promise<FileSystemHandle | undefined>
+  deleteHandle(handleKey: string): Promise<void>
   clear(): Promise<void>
 }
 
@@ -97,6 +98,11 @@ export function createWorkspacePersistence(
     async loadHandle(handleKey) {
       const db = await database
       return db.get('handles', handleKey)
+    },
+
+    async deleteHandle(handleKey) {
+      const db = await database
+      await db.delete('handles', handleKey)
     },
 
     async clear() {

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { WorkspaceDocument } from '../domain/workspace'
 import { AssetRegistry } from './assetRegistry'
+import type { FileAdapter } from './fileAdapter'
 import {
   FallbackFileAdapter,
   createDomFilePicker,
@@ -144,6 +145,15 @@ describe('fallback file adapter', () => {
     expect(anchor.href).toBe('blob:download')
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:download')
     click.mockRestore()
+  })
+
+  it('implements the shared permission request contract without write-back support', async () => {
+    const adapter: FileAdapter = new FallbackFileAdapter({
+      assetRegistry: createRegistry(),
+      picker: { pickFiles: vi.fn(async () => []) },
+    })
+
+    await expect(adapter.requestWritePermission(createDocument())).resolves.toBe('denied')
   })
 })
 

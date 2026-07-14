@@ -23,6 +23,7 @@ export interface NativeFileSystemEnvironment {
 export interface FileHandleRegistry {
   get(key: string): FileSystemFileHandle | undefined
   set(key: string, handle: FileSystemFileHandle): void
+  delete(key: string): void
   entries(): IterableIterator<[string, FileSystemFileHandle]>
   clear(): void
 }
@@ -36,6 +37,10 @@ export class InMemoryFileHandleRegistry implements FileHandleRegistry {
 
   set(key: string, handle: FileSystemFileHandle) {
     this.handles.set(key, handle)
+  }
+
+  delete(key: string) {
+    this.handles.delete(key)
   }
 
   entries() {
@@ -121,7 +126,7 @@ export class NativeFileAdapter implements FileAdapter {
     }
 
     try {
-      const directory = await picker({ mode: 'readwrite' })
+      const directory = await picker({ mode: 'read' })
       const result = createEmptyOpenResult()
       await this.walkDirectory(directory, '', result)
       result.ignoredCount = result.ignoredFiles.length
@@ -137,7 +142,8 @@ export class NativeFileAdapter implements FileAdapter {
     if (!handle) return { status: 'unavailable' }
 
     const permission = await handle.queryPermission({ mode: 'readwrite' })
-    if (permission !== 'granted') return { status: 'permission-denied' }
+    if (permission === 'prompt') return { status: 'permission-required' }
+    if (permission === 'denied') return { status: 'permission-denied' }
 
     const diskFile = await handle.getFile()
     const fingerprint = fingerprintFor(diskFile)
@@ -151,8 +157,19 @@ export class NativeFileAdapter implements FileAdapter {
     }
 
     const writable = await handle.createWritable()
-    await writable.write(document.text)
-    await writable.close()
+    try {
+      await writable.write(document.text)
+      await writable.close()
+    } catch (error) {
+      if (typeof writable.abort === 'function') {
+        try {
+          await writable.abort(error)
+        } catch {
+          // Preserve the original write or close failure.
+        }
+      }
+      throw error
+    }
     const writtenFile = await handle.getFile()
 
     return { status: 'written', fingerprint: fingerprintFor(writtenFile) }

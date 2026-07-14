@@ -150,6 +150,20 @@ describe('createWorkspacePersistence', () => {
     expect(restored).not.toBe(handle)
   })
 
+  it('deletes one stored handle without affecting another', async () => {
+    const persistence = createWorkspacePersistence({ dbName: databaseName() })
+    const first = { kind: 'file', name: 'first.md' }
+    const second = { kind: 'file', name: 'second.md' }
+
+    await persistence.saveHandle('handle-a', first as unknown as FileSystemHandle)
+    await persistence.saveHandle('handle-b', second as unknown as FileSystemHandle)
+
+    await persistence.deleteHandle('handle-a')
+
+    expect(await persistence.loadHandle('handle-a')).toBeUndefined()
+    expect(await persistence.loadHandle('handle-b')).toEqual(second)
+  })
+
   it('restores workspace documents even when their handles are unavailable', async () => {
     const persistence = createWorkspacePersistence({ dbName: databaseName() })
     const current = snapshot()

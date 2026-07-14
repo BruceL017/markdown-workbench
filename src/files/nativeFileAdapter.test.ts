@@ -14,6 +14,10 @@ class FakeFileHandle {
   permission: PermissionState = 'granted'
   requestPermissionCalls = 0
   writes: string[] = []
+  abortCalls = 0
+  writeFailure?: Error
+  closeFailure?: Error
+  abortFailure?: Error
 
   constructor(
     readonly name: string,
@@ -43,14 +47,20 @@ class FakeFileHandle {
 
     return {
       write: async (text: string) => {
+        if (this.writeFailure) throw this.writeFailure
         nextText = text
         this.writes.push(text)
       },
       close: async () => {
+        if (this.closeFailure) throw this.closeFailure
         this.file = new File([nextText], this.name, {
           type: 'text/markdown',
           lastModified: this.file.lastModified + 1,
         })
+      },
+      abort: async () => {
+        this.abortCalls += 1
+        if (this.abortFailure) throw this.abortFailure
       },
     }
   }
@@ -183,6 +193,31 @@ describe('native file adapter', () => {
     })
   })
 
+  it('returns an empty directory result only for cancellation', async () => {
+    const failure = new Error('directory failed')
+    const showDirectoryPicker = vi
+      .fn()
+      .mockRejectedValueOnce(new DOMException('cancelled', 'AbortError'))
+      .mockRejectedValueOnce(failure)
+    const adapter = new NativeFileAdapter({
+      assetRegistry: createRegistry(),
+      environment: {
+        isSecureContext: true,
+        showOpenFilePicker: vi.fn(),
+        showDirectoryPicker,
+      },
+    })
+
+    await expect(adapter.openDirectory()).resolves.toEqual({
+      documents: [],
+      assetPaths: [],
+      ignoredFiles: [],
+      ignoredCount: 0,
+    })
+    await expect(adapter.openDirectory()).rejects.toBe(failure)
+    expect(showDirectoryPicker).toHaveBeenCalledWith({ mode: 'read' })
+  })
+
   it('walks directories recursively using workspace-root-relative paths', async () => {
     const markdown = new FakeFileHandle(
       'guide.markdown',
@@ -197,12 +232,15 @@ describe('native file adapter', () => {
       ['images', fakeDirectory('images', [['cover.png', image]])],
     ])
     const registry = createRegistry()
+    const showDirectoryPicker = vi.fn(
+      async () => selectedDirectory as unknown as FileSystemDirectoryHandle,
+    )
     const adapter = new NativeFileAdapter({
       assetRegistry: registry,
       environment: {
         isSecureContext: true,
         showOpenFilePicker: vi.fn(),
-        showDirectoryPicker: vi.fn(async () => selectedDirectory as unknown as FileSystemDirectoryHandle),
+        showDirectoryPicker,
       },
       createId: () => 'guide-id',
       createHandleKey: () => 'guide-handle',
@@ -211,6 +249,7 @@ describe('native file adapter', () => {
 
     const result = await adapter.openDirectory()
 
+    expect(showDirectoryPicker).toHaveBeenCalledWith({ mode: 'read' })
     expect(result.documents[0]).toEqual(
       expect.objectContaining({ name: 'guide.markdown', virtualPath: 'docs/guide.markdown' }),
     )
@@ -307,10 +346,104 @@ describe('native file adapter', () => {
     const opened = await adapter.openFiles()
     const document = { ...opened.documents[0], text: 'edit', dirty: true }
 
-    await expect(adapter.save(document)).resolves.toEqual({ status: 'permission-denied' })
+    await expect(adapter.save(document)).resolves.toEqual({ status: 'permission-required' })
     expect(handle.requestPermissionCalls).toBe(0)
 
     await expect(adapter.requestWritePermission(document)).resolves.toBe('granted')
     expect(handle.requestPermissionCalls).toBe(1)
   })
+
+  it('distinguishes denied write permission from prompt', async () => {
+    const handle = new FakeFileHandle(
+      'notes.md',
+      new File(['original'], 'notes.md', { type: 'text/markdown', lastModified: 10 }),
+    )
+    handle.permission = 'denied'
+    const adapter = adapterForHandle(handle)
+    const opened = await adapter.openFiles()
+
+    await expect(adapter.save({ ...opened.documents[0], text: 'edit', dirty: true })).resolves.toEqual({
+      status: 'permission-denied',
+    })
+    expect(handle.requestPermissionCalls).toBe(0)
+  })
+
+  it('opens directories read-only and requests write access only after save needs it', async () => {
+    const handle = new FakeFileHandle(
+      'notes.md',
+      new File(['original'], 'notes.md', { type: 'text/markdown', lastModified: 10 }),
+    )
+    handle.permission = 'prompt'
+    const directory = fakeDirectory('project', [['notes.md', handle]])
+    const showDirectoryPicker = vi.fn(
+      async () => directory as unknown as FileSystemDirectoryHandle,
+    )
+    const adapter = new NativeFileAdapter({
+      assetRegistry: createRegistry(),
+      environment: {
+        isSecureContext: true,
+        showOpenFilePicker: vi.fn(),
+        showDirectoryPicker,
+      },
+      createId: () => 'notes-id',
+      createHandleKey: () => 'notes-handle',
+    })
+
+    const opened = await adapter.openDirectory()
+    const document = { ...opened.documents[0], text: 'edit', dirty: true }
+
+    expect(showDirectoryPicker).toHaveBeenCalledWith({ mode: 'read' })
+    expect(handle.requestPermissionCalls).toBe(0)
+    await expect(adapter.save(document)).resolves.toEqual({ status: 'permission-required' })
+    await expect(adapter.requestWritePermission(document)).resolves.toBe('granted')
+    await expect(adapter.save(document)).resolves.toMatchObject({ status: 'written' })
+    expect(handle.requestPermissionCalls).toBe(1)
+  })
+
+  it.each(['write', 'close'] as const)('aborts and rethrows when writable %s fails', async (stage) => {
+    const handle = new FakeFileHandle(
+      'notes.md',
+      new File(['original'], 'notes.md', { type: 'text/markdown', lastModified: 10 }),
+    )
+    const failure = new Error(`${stage} failed`)
+    if (stage === 'write') {
+      handle.writeFailure = failure
+      handle.abortFailure = new Error('abort failed')
+    } else {
+      handle.closeFailure = failure
+    }
+    const adapter = adapterForHandle(handle)
+    const opened = await adapter.openFiles()
+
+    await expect(
+      adapter.save({ ...opened.documents[0], text: 'edit', dirty: true }),
+    ).rejects.toBe(failure)
+    expect(handle.abortCalls).toBe(1)
+  })
+
+  it('deletes only the requested in-memory handle', () => {
+    const registry = new InMemoryFileHandleRegistry()
+    const first = new FakeFileHandle('first.md', new File(['first'], 'first.md'))
+    const second = new FakeFileHandle('second.md', new File(['second'], 'second.md'))
+    registry.set('first', first as unknown as FileSystemFileHandle)
+    registry.set('second', second as unknown as FileSystemFileHandle)
+
+    registry.delete('first')
+
+    expect(registry.get('first')).toBeUndefined()
+    expect(registry.get('second')).toBe(second)
+  })
 })
+
+function adapterForHandle(handle: FakeFileHandle) {
+  return new NativeFileAdapter({
+    assetRegistry: createRegistry(),
+    environment: {
+      isSecureContext: true,
+      showOpenFilePicker: vi.fn(async () => [handle] as unknown as FileSystemFileHandle[]),
+      showDirectoryPicker: vi.fn(),
+    },
+    createId: () => 'notes-id',
+    createHandleKey: () => 'notes-handle',
+  })
+}
