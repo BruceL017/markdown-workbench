@@ -3,6 +3,7 @@ import type { FileAdapter } from '../files/fileAdapter'
 import {
   InMemoryFileHandleRegistry,
   NativeFileAdapter,
+  type FileHandleRegistry,
 } from '../files/nativeFileAdapter'
 import { FallbackFileAdapter } from '../files/fallbackFileAdapter'
 import { createWorkspaceStore } from '../state/workspaceStore'
@@ -10,6 +11,7 @@ import { createWorkspaceStore } from '../state/workspaceStore'
 export interface WorkbenchRuntime {
   store: ReturnType<typeof createWorkspaceStore>
   assetRegistry: AssetRegistry
+  nativeHandleRegistry: FileHandleRegistry
   nativeAdapter: FileAdapter
   fallbackAdapter: FileAdapter
 }
@@ -21,6 +23,7 @@ export function createWorkbenchRuntime(): WorkbenchRuntime {
   return {
     store: createWorkspaceStore(),
     assetRegistry,
+    nativeHandleRegistry: handleRegistry,
     nativeAdapter: new NativeFileAdapter({ assetRegistry, handleRegistry }),
     fallbackAdapter: new FallbackFileAdapter({ assetRegistry }),
   }

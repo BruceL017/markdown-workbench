@@ -25,6 +25,7 @@ import {
   useSyncExternalStore,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type RefObject,
 } from 'react'
 
 import { MarkdownEditor } from './editor/MarkdownEditor'
@@ -48,6 +49,7 @@ import {
 import { DebouncedMarkdownPreview } from './markdown/DebouncedMarkdownPreview'
 import { scrollToDocumentAnchor } from './workbench/previewNavigation'
 import { createWorkbenchRuntime, type WorkbenchRuntime } from './workbench/runtime'
+import { useModalFocus } from './workbench/useModalFocus'
 
 interface AppProps {
   runtime?: WorkbenchRuntime
@@ -58,6 +60,8 @@ interface ConflictState {
   diskText: string
   fingerprint: DiskFingerprint
 }
+
+type SaveOutcome = 'saved' | 'conflict' | 'failed'
 
 const splitActions: Array<{
   direction: SplitDirection
@@ -87,6 +91,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
   const [savingDocumentId, setSavingDocumentId] = useState<string | null>(null)
   const [conflict, setConflict] = useState<ConflictState | null>(null)
   const [closeRequest, setCloseRequest] = useState<string | null>(null)
+  const [closeAfterSave, setCloseAfterSave] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [desktop, setDesktop] = useState(() => globalThis.innerWidth >= 1024)
@@ -144,7 +149,6 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         replaceDocumentInPane(model, document, paneId)
       }
       syncLayout()
-      setDrawerOpen(false)
     },
     [model, runtime, syncLayout],
   )
@@ -155,7 +159,6 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
       if (!document) return
       addDocumentSplit(model, document, direction)
       syncLayout()
-      setDrawerOpen(false)
     },
     [model, runtime, syncLayout],
   )
@@ -174,7 +177,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         const result = kind === 'files'
           ? await adapter.openFiles()
           : await adapter.openDirectory()
-        acceptOpenResult(result)
+        await acceptOpenResult(result)
       } catch (openError) {
         setError(messageForError(openError, `Could not open ${kind}.`))
       } finally {
@@ -185,25 +188,27 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
   )
 
   const acceptOpenResult = useCallback(
-    (result: OpenResult) => {
+    async (result: OpenResult) => {
       if (result.documents.length === 0) return
       const current = runtime.store.getState()
-      const existingByPath = new Map(
-        current.documentOrder.map((id) => {
-          const document = current.documents[id]
-          return [documentKey(document), document] as const
-        }),
-      )
+      const knownDocuments = current.documentOrder.map((id) => current.documents[id])
       const openedDocuments: WorkspaceDocument[] = []
       const resultDocuments: WorkspaceDocument[] = []
 
       for (const incoming of result.documents) {
-        const existing = existingByPath.get(documentKey(incoming))
+        const existing = await sameNativeDocument(
+          incoming,
+          knownDocuments,
+          runtime.nativeHandleRegistry,
+        )
         if (existing) {
+          if (incoming.handleKey && incoming.handleKey !== existing.handleKey) {
+            runtime.nativeHandleRegistry.delete(incoming.handleKey)
+          }
           resultDocuments.push(existing)
           continue
         }
-        existingByPath.set(documentKey(incoming), incoming)
+        knownDocuments.push(incoming)
         openedDocuments.push(incoming)
         resultDocuments.push(incoming)
       }
@@ -226,9 +231,9 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
   )
 
   const performSave = useCallback(
-    async (documentId: string, force = false): Promise<boolean> => {
+    async (documentId: string, force = false): Promise<SaveOutcome> => {
       const document = runtime.store.getState().documents[documentId]
-      if (!document) return false
+      if (!document) return 'failed'
       const adapter = document.sourceKind === 'native'
         ? runtime.nativeAdapter
         : runtime.fallbackAdapter
@@ -242,7 +247,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
           const permission = await adapter.requestWritePermission(document)
           if (permission !== 'granted') {
             setError('Write permission was not granted. Your draft is still safe locally.')
-            return false
+            return 'failed'
           }
           result = await adapter.save(document, force ? { force: true } : undefined)
         }
@@ -250,7 +255,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         return finishSave(document, result)
       } catch (saveError) {
         setError(messageForError(saveError, 'Save failed. Your unsaved draft was kept.'))
-        return false
+        return 'failed'
       } finally {
         setSavingDocumentId(null)
       }
@@ -259,14 +264,14 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
   )
 
   const finishSave = useCallback(
-    (document: WorkspaceDocument, result: SaveResult): boolean => {
+    (document: WorkspaceDocument, result: SaveResult): SaveOutcome => {
       if (result.status === 'conflict') {
         setConflict({
           documentId: document.id,
           diskText: result.diskText,
           fingerprint: result.fingerprint,
         })
-        return false
+        return 'conflict'
       }
 
       if (result.status === 'written') {
@@ -276,14 +281,14 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         })
         setConflict(null)
         setMessage(`Saved ${document.name} to the original file.`)
-        return true
+        return 'saved'
       }
 
       if (result.status === 'downloaded') {
         runtime.store.getState().markDocumentSaved(document.id, { text: document.text })
         setConflict(null)
         setMessage(`Download started for ${result.filename}.`)
-        return true
+        return 'saved'
       }
 
       const failureMessages: Record<
@@ -295,7 +300,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         unavailable: 'The original file is unavailable. Your draft was kept.',
       }
       setError(failureMessages[result.status])
-      return false
+      return 'failed'
     },
     [runtime],
   )
@@ -305,6 +310,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
       removeDocumentPane(model, documentId)
       syncLayout()
       setCloseRequest(null)
+      setCloseAfterSave((pendingId) => pendingId === documentId ? null : pendingId)
     },
     [model, syncLayout],
   )
@@ -323,11 +329,23 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
     if (!closeRequest) return
     const documentId = closeRequest
     setCloseRequest(null)
-    const saved = await performSave(documentId)
-    if (saved && !runtime.store.getState().documents[documentId]?.dirty) {
+    setCloseAfterSave(documentId)
+    const outcome = await performSave(documentId)
+    if (outcome === 'saved' && !runtime.store.getState().documents[documentId]?.dirty) {
       closePane(documentId)
+    } else if (outcome === 'failed') {
+      setCloseAfterSave((pendingId) => pendingId === documentId ? null : pendingId)
     }
   }, [closePane, closeRequest, performSave, runtime])
+
+  const completeCloseIntent = useCallback(
+    (documentId: string) => {
+      if (closeAfterSave !== documentId) return
+      setCloseAfterSave(null)
+      closePane(documentId)
+    },
+    [closeAfterSave, closePane],
+  )
 
   const reloadConflict = useCallback(() => {
     if (!conflict) return
@@ -339,7 +357,8 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
     const name = runtime.store.getState().documents[conflict.documentId]?.name ?? 'document'
     setMessage(`Reloaded ${name} from disk.`)
     setConflict(null)
-  }, [conflict, runtime])
+    completeCloseIntent(conflict.documentId)
+  }, [completeCloseIntent, conflict, runtime])
 
   const downloadConflictCopy = useCallback(async () => {
     if (!conflict) return
@@ -353,6 +372,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         runtime.store.getState().markDocumentSaved(document.id, { text: document.text })
         setMessage(`Download started for ${result.filename}.`)
         setConflict(null)
+        completeCloseIntent(document.id)
       } else {
         setError('Could not start a download. Your draft was kept.')
       }
@@ -361,7 +381,19 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
     } finally {
       setSavingDocumentId(null)
     }
-  }, [conflict, runtime])
+  }, [completeCloseIntent, conflict, runtime])
+
+  const overwriteConflict = useCallback(async () => {
+    if (!conflict) return
+    const documentId = conflict.documentId
+    const outcome = await performSave(documentId, true)
+    if (outcome === 'saved') {
+      completeCloseIntent(documentId)
+    } else if (outcome === 'failed') {
+      setConflict(null)
+      setCloseAfterSave((pendingId) => pendingId === documentId ? null : pendingId)
+    }
+  }, [completeCloseIntent, conflict, performSave])
 
   const openInternalDocument = useCallback(
     (path: string, currentDocumentId: string, hash?: string) => {
@@ -563,8 +595,14 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
           nativeDirectory={runtime.nativeAdapter.capabilities.openDirectory}
           onClose={closeDrawer}
           onOpen={openLocal}
-          onSelect={showDocument}
-          onSplit={splitDocument}
+          onSelect={(documentId) => {
+            showDocument(documentId)
+            closeDrawer()
+          }}
+          onSplit={(documentId, direction) => {
+            splitDocument(documentId, direction)
+            closeDrawer()
+          }}
         />
       ) : null}
 
@@ -579,11 +617,8 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
           busy={savingDocumentId === conflict.documentId}
           onReload={reloadConflict}
           onDownload={() => void downloadConflictCopy()}
-          onOverwrite={() => {
-            const documentId = conflict.documentId
-            setConflict(null)
-            void performSave(documentId, true)
-          }}
+          onOverwrite={() => void overwriteConflict()}
+          returnFocusRef={fileButtonRef}
         />
       ) : null}
 
@@ -594,6 +629,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
           onCancel={() => setCloseRequest(null)}
           onDiscard={() => closePane(closeRequest)}
           onSave={() => void saveAndClose()}
+          returnFocusRef={fileButtonRef}
         />
       ) : null}
     </main>
@@ -874,16 +910,21 @@ function ConflictDialog({
   onReload,
   onDownload,
   onOverwrite,
+  returnFocusRef,
 }: {
   documentName: string
   busy: boolean
   onReload: () => void
   onDownload: () => void
   onOverwrite: () => void
+  returnFocusRef: RefObject<HTMLElement | null>
 }) {
+  const dialogRef = useRef<HTMLElement>(null)
+  useModalFocus(dialogRef, returnFocusRef)
+
   return (
     <div className="dialog-layer">
-      <section className="decision-dialog" role="alertdialog" aria-modal="true" aria-labelledby="conflict-title" aria-describedby="conflict-description">
+      <section ref={dialogRef} className="decision-dialog" role="alertdialog" aria-modal="true" aria-labelledby="conflict-title" aria-describedby="conflict-description">
         <p className="eyebrow">Save conflict</p>
         <h2 id="conflict-title">{documentName} changed on disk</h2>
         <p id="conflict-description">
@@ -911,16 +952,21 @@ function CloseGuardDialog({
   onCancel,
   onDiscard,
   onSave,
+  returnFocusRef,
 }: {
   documentName: string
   busy: boolean
   onCancel: () => void
   onDiscard: () => void
   onSave: () => void
+  returnFocusRef: RefObject<HTMLElement | null>
 }) {
+  const dialogRef = useRef<HTMLElement>(null)
+  useModalFocus(dialogRef, returnFocusRef, onCancel)
+
   return (
     <div className="dialog-layer">
-      <section className="decision-dialog" role="alertdialog" aria-modal="true" aria-labelledby="close-title" aria-describedby="close-description">
+      <section ref={dialogRef} className="decision-dialog" role="alertdialog" aria-modal="true" aria-labelledby="close-title" aria-describedby="close-description">
         <p className="eyebrow">Unsaved draft</p>
         <h2 id="close-title">Unsaved changes</h2>
         <p id="close-description">Save {documentName} before closing this pane?</p>
@@ -934,10 +980,6 @@ function CloseGuardDialog({
   )
 }
 
-function documentKey(document: WorkspaceDocument): string {
-  return `${document.sourceKind}:${document.virtualPath}`
-}
-
 function parentPath(path: string): string {
   const slash = path.lastIndexOf('/')
   return slash === -1 ? '' : path.slice(0, slash)
@@ -949,4 +991,26 @@ function stopTabEvent(event: ReactMouseEvent<HTMLButtonElement>) {
 
 function messageForError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? `${fallback} ${error.message}` : fallback
+}
+
+async function sameNativeDocument(
+  incoming: WorkspaceDocument,
+  candidates: WorkspaceDocument[],
+  handles: WorkbenchRuntime['nativeHandleRegistry'],
+): Promise<WorkspaceDocument | undefined> {
+  if (incoming.sourceKind !== 'native' || !incoming.handleKey) return undefined
+  const incomingHandle = handles.get(incoming.handleKey)
+  if (!incomingHandle) return undefined
+
+  for (const candidate of candidates) {
+    if (candidate.sourceKind !== 'native' || !candidate.handleKey) continue
+    const candidateHandle = handles.get(candidate.handleKey)
+    if (!candidateHandle) continue
+    try {
+      if (await incomingHandle.isSameEntry(candidateHandle)) return candidate
+    } catch {
+      // If identity cannot be proven, preserve both documents.
+    }
+  }
+  return undefined
 }
