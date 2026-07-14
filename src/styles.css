@@ -615,6 +615,16 @@ button:disabled {
   background: var(--color-surface);
 }
 
+.document-pane {
+  height: 100%;
+  min-height: 0;
+}
+
+.document-pane > .markdown-editor,
+.document-pane > .preview-scroll {
+  height: 100%;
+}
+
 .mobile-document {
   display: grid;
   height: 100%;
@@ -647,8 +657,7 @@ button:disabled {
   min-height: 0;
 }
 
-.mobile-pane-content > .markdown-editor,
-.mobile-pane-content > .preview-scroll {
+.mobile-pane-content > .document-pane {
   height: 100%;
 }
 

@@ -118,6 +118,28 @@ describe('App', () => {
     expect(workbench.store.getState().activeDocumentId).toBe('second')
   })
 
+  it('shows the first new document when a batch opens over an existing pane', async () => {
+    const user = userEvent.setup()
+    const fallback = adapter({
+      openFiles: vi.fn(async () => openResult([document('new-first'), document('new-second')])),
+    })
+    const workbench = runtime({ documents: [document('old')], fallback })
+    render(<App runtime={workbench} />)
+
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    await user.click(screen.getByRole('button', { name: 'Open files' }))
+
+    expect(workbench.store.getState().documentOrder).toEqual([
+      'old',
+      'new-first',
+      'new-second',
+    ])
+    expect(visibleIds(workbench)).toEqual(['new-first'])
+    expect(workbench.store.getState().activeDocumentId).toBe('new-first')
+    expect(workbench.store.getState().documents.old).toBeDefined()
+    expect(workbench.store.getState().documents['new-second']).toBeDefined()
+  })
+
   it('splits buffered documents to every edge and focuses visible duplicates', async () => {
     const user = userEvent.setup()
     const workbench = runtime({ documents: [document('first'), document('second')] })

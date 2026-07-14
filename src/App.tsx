@@ -46,6 +46,7 @@ import {
   visibleDocumentIds,
 } from './layout/workbenchLayout'
 import { DebouncedMarkdownPreview } from './markdown/DebouncedMarkdownPreview'
+import { scrollToDocumentAnchor } from './workbench/previewNavigation'
 import { createWorkbenchRuntime, type WorkbenchRuntime } from './workbench/runtime'
 
 interface AppProps {
@@ -209,8 +210,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
 
       runtime.store.getState().addDocuments(openedDocuments)
       const first = resultDocuments[0]
-      const noVisibleDocument = visibleDocumentIds(model).length === 0
-      if (first && (noVisibleDocument || result.documents.length === 1)) {
+      if (first) {
         if (!focusDocument(model, first.id)) replaceDocumentInPane(model, first)
         syncLayout()
       }
@@ -375,7 +375,7 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
         return
       }
       showDocument(targetId, paneIdForDocument(model, currentDocumentId))
-      scrollToPreviewAnchor(hash)
+      scrollToDocumentAnchor(targetId, hash)
     },
     [model, runtime, showDocument],
   )
@@ -786,27 +786,27 @@ function DocumentPane({
   onSave: () => void
   onOpenDocument: (path: string, hash?: string) => void
 }) {
-  if (document.viewMode === 'source') {
-    return (
-      <MarkdownEditor
-        value={document.text}
-        ariaLabel={`Edit ${document.name}`}
-        onChange={(text) => runtime.store.getState().updateDocumentText(document.id, text)}
-        onSave={onSave}
-      />
-    )
-  }
-
   return (
-    <div className="preview-scroll">
-      <DebouncedMarkdownPreview
-        documentKey={document.id}
-        markdown={document.text}
-        currentDocumentPath={document.virtualPath}
-        assetRegistry={runtime.assetRegistry}
-        ariaLabel={`Preview ${document.name}`}
-        onOpenDocument={onOpenDocument}
-      />
+    <div className="document-pane" data-workbench-document-pane={document.id}>
+      {document.viewMode === 'source' ? (
+        <MarkdownEditor
+          value={document.text}
+          ariaLabel={`Edit ${document.name}`}
+          onChange={(text) => runtime.store.getState().updateDocumentText(document.id, text)}
+          onSave={onSave}
+        />
+      ) : (
+        <div className="preview-scroll">
+          <DebouncedMarkdownPreview
+            documentKey={document.id}
+            markdown={document.text}
+            currentDocumentPath={document.virtualPath}
+            assetRegistry={runtime.assetRegistry}
+            ariaLabel={`Preview ${document.name}`}
+            onOpenDocument={onOpenDocument}
+          />
+        </div>
+      )}
     </div>
   )
 }
@@ -949,19 +949,4 @@ function stopTabEvent(event: ReactMouseEvent<HTMLButtonElement>) {
 
 function messageForError(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? `${fallback} ${error.message}` : fallback
-}
-
-function scrollToPreviewAnchor(hash?: string) {
-  if (!hash?.startsWith('#')) return
-  let anchorId: string
-  try {
-    anchorId = decodeURIComponent(hash.slice(1))
-  } catch {
-    return
-  }
-  globalThis.requestAnimationFrame?.(() => {
-    globalThis.requestAnimationFrame?.(() => {
-      globalThis.document.getElementById(anchorId)?.scrollIntoView?.({ block: 'start' })
-    })
-  })
 }
