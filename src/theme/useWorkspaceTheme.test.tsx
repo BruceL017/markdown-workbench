@@ -6,10 +6,14 @@ import { useWorkspaceTheme } from './useWorkspaceTheme'
 
 afterEach(() => {
   delete document.documentElement.dataset.theme
+  document.querySelector('meta[name="theme-color"]')?.remove()
 })
 
 describe('useWorkspaceTheme', () => {
   it('tracks system color changes only in System mode and removes listeners', () => {
+    const themeColor = document.createElement('meta')
+    themeColor.name = 'theme-color'
+    document.head.append(themeColor)
     let dark = false
     let listener: (() => void) | undefined
     const media = {
@@ -32,12 +36,15 @@ describe('useWorkspaceTheme', () => {
 
     expect(result.current).toBe('light')
     expect(document.documentElement.dataset.theme).toBe('light')
+    expect(themeColor).toHaveAttribute('content', '#f8f9fb')
     dark = true
     act(() => listener?.())
     expect(result.current).toBe('dark')
+    expect(themeColor).toHaveAttribute('content', '#1b1d20')
 
     rerender({ preference: 'light' })
     expect(result.current).toBe('light')
+    expect(themeColor).toHaveAttribute('content', '#f8f9fb')
     expect(media.removeEventListener).toHaveBeenCalled()
     const removals = vi.mocked(media.removeEventListener).mock.calls.length
     act(() => listener?.())

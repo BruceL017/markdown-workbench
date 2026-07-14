@@ -448,6 +448,16 @@ test('empty, drawer, multi-pane, and settings states pass axe and attach visual 
   await attachScreenshot(page, testInfo, 'settings-modal')
 })
 
+test('dark theme focused skip link passes axe', async ({ page, browserName }) => {
+  test.skip(browserName !== 'chromium', 'Deterministic axe audit runs once in Chromium.')
+  await page.goto('/')
+  await page.getByRole('combobox', { name: 'Theme' }).selectOption('dark')
+  await page.getByRole('link', { name: 'Skip to document workspace' }).focus()
+
+  await expect(page.getByRole('link', { name: 'Skip to document workspace' })).toBeFocused()
+  await expectAxeClean(page, 'dark theme focused skip link')
+})
+
 test('eight panes and a two-megabyte document remain editable and previewable', async ({ page, browserName }) => {
   test.skip(browserName !== 'chromium', 'Stress acceptance runs once in Chromium.')
   test.setTimeout(180_000)

@@ -95,6 +95,14 @@ describe('App', () => {
     render(<App runtime={runtime()} />)
 
     expect(screen.getByRole('main', { name: 'Markdown Workbench' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Skip to document workspace' })).toHaveAttribute(
+      'href',
+      '#document-workspace',
+    )
+    expect(screen.getByRole('region', { name: 'Document workspace' })).toHaveAttribute(
+      'id',
+      'document-workspace',
+    )
     expect(screen.getByRole('heading', { name: 'Open local Markdown' })).toBeInTheDocument()
     expect(screen.getByText(/never uploaded/i)).toBeInTheDocument()
 

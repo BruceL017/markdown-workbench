@@ -2,6 +2,8 @@
   color-scheme: light dark;
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 
@@ -12,6 +14,7 @@
   --color-text: oklch(25% 0.018 248);
   --color-text-muted: oklch(52% 0.016 248);
   --color-accent: oklch(54% 0.12 238);
+  --color-on-accent: white;
   --color-code: oklch(35% 0.025 248);
   --color-code-bg: oklch(95.5% 0.007 248);
   --color-mark-bg: oklch(91% 0.08 92);
@@ -21,6 +24,8 @@
   --color-danger: oklch(52% 0.17 28);
   --color-danger-soft: oklch(95% 0.035 28);
   --shadow-overlay: 0 18px 44px oklch(18% 0.025 248 / 0.2);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --motion-fast: 180ms;
 
   color: var(--color-text);
@@ -58,6 +63,8 @@ input,
 textarea,
 select {
   font: inherit;
+  -webkit-tap-highlight-color: oklch(54% 0.12 238 / 0.16);
+  touch-action: manipulation;
 }
 
 button {
@@ -79,6 +86,23 @@ button[aria-disabled="true"] {
   outline-offset: 2px;
 }
 
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: max(0.5rem, env(safe-area-inset-top));
+  left: max(0.5rem, env(safe-area-inset-left));
+  padding: 0.55rem 0.75rem;
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+  border-radius: 0.375rem;
+  box-shadow: var(--shadow-overlay);
+  transform: translateY(calc(-100% - 1rem));
+}
+
+.skip-link:focus-visible {
+  transform: none;
+}
+
 .app-shell {
   display: grid;
   grid-template-rows: 3.25rem minmax(0, 1fr);
@@ -97,7 +121,8 @@ button[aria-disabled="true"] {
   align-items: center;
   justify-content: space-between;
   min-width: 0;
-  padding-inline: 0.875rem;
+  padding-left: max(0.875rem, env(safe-area-inset-left));
+  padding-right: max(0.875rem, env(safe-area-inset-right));
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-border);
 }
@@ -166,6 +191,9 @@ button[aria-disabled="true"] {
   border-radius: 0.375rem;
   cursor: pointer;
   font-weight: 560;
+  transition-duration: 140ms;
+  transition-property: scale;
+  transition-timing-function: var(--ease-out);
 }
 
 .toolbar-button,
@@ -180,7 +208,7 @@ button[aria-disabled="true"] {
 .secondary-button,
 .danger-button {
   display: inline-flex;
-  min-height: 2.25rem;
+  min-height: 2.5rem;
   align-items: center;
   justify-content: center;
   gap: 0.45rem;
@@ -195,7 +223,7 @@ button[aria-disabled="true"] {
 }
 
 .primary-button {
-  color: white;
+  color: var(--color-on-accent);
   background: var(--color-accent);
   border-color: var(--color-accent);
 }
@@ -215,12 +243,19 @@ button[aria-disabled="true"] {
 }
 
 .icon-button {
+  position: relative;
   display: inline-grid;
-  width: 2rem;
-  height: 2rem;
+  width: 2.25rem;
+  height: 2.25rem;
   flex: none;
   place-items: center;
   padding: 0;
+}
+
+.icon-button::after {
+  position: absolute;
+  content: "";
+  inset: -0.125rem;
 }
 
 .icon-button svg,
@@ -238,6 +273,7 @@ button[aria-disabled="true"] {
   background: var(--color-surface-subtle);
   border-radius: 999px;
   font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
   line-height: 1.25rem;
   text-align: center;
 }
@@ -282,6 +318,7 @@ button[aria-disabled="true"] {
   font-size: clamp(1.45rem, 3vw, 2rem);
   letter-spacing: -0.035em;
   line-height: 1.15;
+  text-wrap: balance;
 }
 
 .empty-workspace > p {
@@ -290,6 +327,7 @@ button[aria-disabled="true"] {
   color: var(--color-text-muted);
   font-size: 0.9375rem;
   line-height: 1.55;
+  text-wrap: pretty;
 }
 
 .empty-actions {
@@ -323,12 +361,16 @@ button[aria-disabled="true"] {
   border: 0;
   cursor: default;
   inset: 0;
-  animation: overlay-in var(--motion-fast) ease-out;
+  animation: overlay-in var(--motion-fast) var(--ease-out);
   pointer-events: auto;
 }
 
 .drawer-layer.is-dragging .drawer-backdrop {
   pointer-events: none;
+}
+
+.drawer-layer.is-dragging {
+  user-select: none;
 }
 
 .drawer-layer.is-dragging .file-drawer {
@@ -347,13 +389,19 @@ button[aria-disabled="true"] {
   width: min(25rem, calc(100% - 1rem));
   height: 100%;
   grid-template-rows: auto auto auto auto minmax(0, 1fr) auto;
-  padding: 1rem;
+  padding:
+    max(1rem, env(safe-area-inset-top))
+    max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
   overflow: hidden;
+  overscroll-behavior: contain;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
   box-shadow: var(--shadow-overlay);
-  animation: drawer-in var(--motion-fast) ease-out;
+  animation: drawer-in var(--motion-fast) var(--ease-drawer);
   pointer-events: auto;
+  transform-origin: left center;
 }
 
 .drawer-header {
@@ -378,6 +426,7 @@ button[aria-disabled="true"] {
   margin: 0;
   font-size: 1rem;
   letter-spacing: -0.01em;
+  text-wrap: balance;
 }
 
 .drawer-open-actions {
@@ -393,6 +442,7 @@ button[aria-disabled="true"] {
   color: var(--color-text-muted);
   font-size: 0.75rem;
   line-height: 1.45;
+  text-wrap: pretty;
 }
 
 .file-list-heading {
@@ -415,6 +465,8 @@ button[aria-disabled="true"] {
 }
 
 .file-list li {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 3.75rem;
   margin-block: 0.2rem;
   border: 1px solid transparent;
   border-radius: 0.45rem;
@@ -491,8 +543,8 @@ button[aria-disabled="true"] {
 }
 
 .file-split-actions .icon-button {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 2.25rem;
+  height: 2.25rem;
   background: transparent;
   border-color: transparent;
 }
@@ -627,8 +679,8 @@ button[aria-disabled="true"] {
 }
 
 .pane-tab-actions .icon-button {
-  width: 1.75rem;
-  height: 1.75rem;
+  width: 2.25rem;
+  height: 2.25rem;
   background: transparent;
   border-color: transparent;
 }
@@ -714,8 +766,8 @@ button[aria-disabled="true"] {
 .live-region {
   position: fixed;
   z-index: 80;
-  right: 1rem;
-  bottom: 1rem;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
   display: grid;
   max-width: min(26rem, calc(100% - 2rem));
   gap: 0.5rem;
@@ -741,9 +793,13 @@ button[aria-disabled="true"] {
 .dialog-layer {
   display: grid;
   place-items: center;
-  padding: 1rem;
+  padding:
+    max(1rem, env(safe-area-inset-top))
+    max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom))
+    max(1rem, env(safe-area-inset-left));
   background: oklch(18% 0.02 248 / 0.36);
-  animation: overlay-in var(--motion-fast) ease-out;
+  animation: overlay-in var(--motion-fast) var(--ease-out);
 }
 
 .decision-dialog {
@@ -753,6 +809,7 @@ button[aria-disabled="true"] {
   border: 1px solid var(--color-border);
   border-radius: 0.65rem;
   box-shadow: var(--shadow-overlay);
+  overscroll-behavior: contain;
 }
 
 .decision-dialog > p:not(.eyebrow) {
@@ -760,6 +817,7 @@ button[aria-disabled="true"] {
   color: var(--color-text-muted);
   font-size: 0.8125rem;
   line-height: 1.5;
+  text-wrap: pretty;
 }
 
 .privacy-list {
@@ -770,6 +828,7 @@ button[aria-disabled="true"] {
   color: var(--color-text-muted);
   font-size: 0.8125rem;
   line-height: 1.45;
+  text-wrap: pretty;
 }
 
 .settings-clear-row {
@@ -878,6 +937,8 @@ button[aria-disabled="true"] {
 .markdown-body h6 {
   margin-block: 1.6em 0.65em;
   line-height: 1.25;
+  scroll-margin-top: 1rem;
+  text-wrap: balance;
 }
 
 .markdown-body h1,
@@ -1005,6 +1066,8 @@ button[aria-disabled="true"] {
   max-width: 100%;
   height: auto;
   margin-block: 1rem;
+  outline: 1px solid rgb(0 0 0 / 0.1);
+  outline-offset: -1px;
 }
 
 .markdown-image-placeholder {
@@ -1080,6 +1143,7 @@ button[aria-disabled="true"] {
   --color-text: oklch(92% 0.008 248);
   --color-text-muted: oklch(70% 0.014 248);
   --color-accent: oklch(70% 0.12 238);
+  --color-on-accent: oklch(18% 0.012 248);
   --color-code: oklch(88% 0.01 248);
   --color-code-bg: oklch(19.5% 0.012 248);
   --color-mark-bg: oklch(43% 0.08 92);
@@ -1088,6 +1152,21 @@ button[aria-disabled="true"] {
   --color-accent-soft: oklch(30% 0.05 238);
   --color-danger: oklch(72% 0.15 28);
   --color-danger-soft: oklch(28% 0.045 28);
+}
+
+:root[data-theme="dark"] .markdown-body img {
+  outline-color: rgb(255 255 255 / 0.1);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .toolbar-button:active:not(:disabled),
+  .primary-button:active:not(:disabled),
+  .secondary-button:active:not(:disabled),
+  .danger-button:active:not(:disabled),
+  .icon-button:active:not(:disabled),
+  .mode-switch button:active:not(:disabled) {
+    scale: 0.96;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1100,6 +1179,7 @@ button[aria-disabled="true"] {
     --color-text: oklch(92% 0.008 248);
     --color-text-muted: oklch(70% 0.014 248);
     --color-accent: oklch(70% 0.12 238);
+    --color-on-accent: oklch(18% 0.012 248);
     --color-code: oklch(88% 0.01 248);
     --color-code-bg: oklch(19.5% 0.012 248);
     --color-mark-bg: oklch(43% 0.08 92);
@@ -1147,14 +1227,6 @@ button[aria-disabled="true"] {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .drawer-backdrop,
-  .file-drawer,
-  .dialog-layer {
-    animation: none;
-  }
-}
-
 @media (max-width: 40rem) {
   .app-shell {
     grid-template-rows: 3rem minmax(0, 1fr);
@@ -1162,7 +1234,8 @@ button[aria-disabled="true"] {
   }
 
   .topbar {
-    padding-inline: 0.6rem;
+    padding-left: max(0.6rem, env(safe-area-inset-left));
+    padding-right: max(0.6rem, env(safe-area-inset-right));
   }
 
   .brand-lockup span {
@@ -1173,11 +1246,15 @@ button[aria-disabled="true"] {
   }
 
   .toolbar-button {
-    min-height: 2.1rem;
+    min-height: 2.5rem;
   }
 
   .file-drawer {
-    padding: 0.8rem;
+    padding:
+      max(0.8rem, env(safe-area-inset-top))
+      max(0.8rem, env(safe-area-inset-right))
+      max(0.8rem, env(safe-area-inset-bottom))
+      max(0.8rem, env(safe-area-inset-left));
   }
 
   .dialog-actions,

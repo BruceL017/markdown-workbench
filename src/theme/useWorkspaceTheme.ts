@@ -4,6 +4,11 @@ import type { ThemePreference } from '../domain/workspace'
 
 export type ResolvedTheme = 'light' | 'dark'
 
+const themeColors: Record<ResolvedTheme, string> = {
+  light: '#f8f9fb',
+  dark: '#1b1d20',
+}
+
 export function useWorkspaceTheme(
   preference: ThemePreference,
   suppliedMedia?: MediaQueryList,
@@ -22,6 +27,10 @@ export function useWorkspaceTheme(
       const next = resolve()
       setResolved(next)
       document.documentElement.dataset.theme = next
+      document.querySelector('meta[name="theme-color"]')?.setAttribute(
+        'content',
+        themeColors[next],
+      )
     }
     apply()
     if (preference === 'system') media?.addEventListener('change', apply)

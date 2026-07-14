@@ -670,10 +670,13 @@ function WorkbenchApp({
 
   return (
     <main className="app-shell" aria-label="Markdown Workbench">
+      <a className="skip-link" href="#document-workspace">
+        Skip to document workspace
+      </a>
       <header className="topbar">
         <div className="brand-lockup">
           <FileMd size={20} weight="fill" aria-hidden />
-          <span>Markdown Workbench</span>
+          <span translate="no">Markdown Workbench</span>
         </div>
         <div className="topbar-actions">
           <span className="capability-label" title={directSave
@@ -728,7 +731,12 @@ function WorkbenchApp({
         </div>
       </header>
 
-      <section className="workspace-stage" aria-label="Document workspace">
+      <section
+        id="document-workspace"
+        className="workspace-stage"
+        aria-label="Document workspace"
+        tabIndex={-1}
+      >
         {visibleIds.length === 0 ? (
           <EmptyWorkspace busyAction={busyAction} onOpen={openLocal} />
         ) : desktop ? (
