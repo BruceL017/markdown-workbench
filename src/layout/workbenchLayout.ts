@@ -30,7 +30,7 @@ const constrainedGlobals: NonNullable<IJsonModel['global']> = {
   tabEnablePopout: false,
   tabEnableRename: false,
   tabEnableRenderOnDemand: false,
-  tabSetEnableClose: false,
+  tabSetEnableClose: true,
   tabSetEnableCloseButton: false,
   tabSetEnableDivide: true,
   tabSetEnableDrag: true,

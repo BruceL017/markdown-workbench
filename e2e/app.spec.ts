@@ -302,15 +302,47 @@ test('existing tabs edge-dock and splitters resize adjacent pane geometry', asyn
   const layoutBox = await layout.boundingBox()
   if (!layoutBox) throw new Error('Expected the desktop layout')
   const firstTab = page.locator('.flexlayout__tab_button').filter({ hasText: 'first.md' })
-  await firstTab.dragTo(layout, {
-    targetPosition: { x: layoutBox.width / 2, y: 4 },
-  })
+  const firstTabset = firstTab.locator(
+    'xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " flexlayout__tabset ")][1]',
+  )
+  const sourcePaneBefore = await firstTabset.boundingBox()
+  if (!sourcePaneBefore) throw new Error('Expected the first document pane')
+  const splitterTreeBefore = await page.locator('.flexlayout__splitter').evaluateAll((splitters) =>
+    splitters.map((splitter) => splitter.className).sort(),
+  )
+  const firstTabBox = await firstTab.boundingBox()
+  if (!firstTabBox) throw new Error('Expected the first document tab')
+  const sourcePoint = {
+    x: firstTabBox.x + Math.min(60, firstTabBox.width / 3),
+    y: firstTabBox.y + firstTabBox.height / 2,
+  }
+  await page.mouse.move(sourcePoint.x, sourcePoint.y)
+  await page.mouse.down()
+  await page.mouse.move(sourcePoint.x + 12, sourcePoint.y + 8, { steps: 4 })
+  await page.waitForTimeout(100)
+  await page.mouse.move(
+    layoutBox.x + layoutBox.width / 2,
+    layoutBox.y + 5,
+    { steps: 20 },
+  )
+  await page.waitForTimeout(120)
+  await page.mouse.up()
   await expect(page.locator('.flexlayout__tabset')).toHaveCount(3)
   const ids = await page.locator('[data-workbench-document-pane]').evaluateAll((panes) =>
     panes.map((pane) => pane.getAttribute('data-workbench-document-pane')),
   )
   expect(ids).toHaveLength(3)
   expect(new Set(ids).size).toBe(3)
+  const sourcePaneAfter = await firstTabset.boundingBox()
+  if (!sourcePaneAfter) throw new Error('Expected the redocked first document pane')
+  expect(Math.max(
+    Math.abs(sourcePaneAfter.width - sourcePaneBefore.width),
+    Math.abs(sourcePaneAfter.height - sourcePaneBefore.height),
+  )).toBeGreaterThan(120)
+  const splitterTreeAfter = await page.locator('.flexlayout__splitter').evaluateAll((splitters) =>
+    splitters.map((splitter) => splitter.className).sort(),
+  )
+  expect(splitterTreeAfter).not.toEqual(splitterTreeBefore)
 
   const before = await page.locator('.flexlayout__tabset').evaluateAll((panes) =>
     panes.map((pane) => pane.getBoundingClientRect().toJSON()),

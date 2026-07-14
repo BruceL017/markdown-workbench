@@ -84,6 +84,29 @@ describe('workbench layout', () => {
     expect(visibleDocumentIds(model)).toEqual(['one', 'two'])
   })
 
+  it('prunes the empty source pane when an existing tab is redocked', () => {
+    const model = createWorkbenchModel(document('one'))
+    addDocumentSplit(model, document('two'), 'right')
+    const targetPane = model.getActiveTabset()
+    if (!targetPane) throw new Error('Expected the target pane')
+
+    model.doAction(Actions.moveNode(
+      'workbench-tab-1',
+      targetPane.getId(),
+      DockLocation.TOP,
+      -1,
+      true,
+    ))
+
+    const tabsets: TabSetNode[] = []
+    model.visitNodes((node) => {
+      if (node instanceof TabSetNode) tabsets.push(node)
+    })
+    expect(tabsets).toHaveLength(2)
+    expect(tabsets.every((tabset) => tabset.getChildren().length === 1)).toBe(true)
+    expect(new Set(visibleDocumentIds(model)).size).toBe(2)
+  })
+
   it('rejects center add and move actions but allows edge docking', () => {
     const centerMove = Actions.moveNode('tab:a', 'pane:b', DockLocation.CENTER, -1)
     const centerAdd = Actions.addTab(
