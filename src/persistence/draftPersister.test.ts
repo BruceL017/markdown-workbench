@@ -223,6 +223,48 @@ describe('createDraftPersister', () => {
     expect(save).toHaveBeenCalledTimes(2)
   })
 
+  it('contains rejected async error observers and keeps the snapshot retryable', async () => {
+    const unhandled: unknown[] = []
+    const processListener = (reason: unknown) => unhandled.push(reason)
+    const browserListener = (event: PromiseRejectionEvent) => {
+      event.preventDefault()
+      unhandled.push(event.reason)
+    }
+    const rejectionEmitter = (globalThis as unknown as {
+      process: {
+        on(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+        off(event: 'unhandledRejection', listener: (reason: unknown) => void): void
+      }
+    }).process
+    rejectionEmitter.on('unhandledRejection', processListener)
+    window.addEventListener('unhandledrejection', browserListener)
+
+    try {
+      const save = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('storage unavailable'))
+        .mockResolvedValueOnce(undefined)
+      const snapshot = { text: 'retry me' }
+      let reportedSnapshot: typeof snapshot | undefined
+      const onError = async (_error: unknown, reported: typeof snapshot) => {
+        reportedSnapshot = reported
+        throw new Error('async observer failed')
+      }
+      const persister = createDraftPersister(save, 0, onError)
+
+      persister.schedule(snapshot)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+
+      expect(reportedSnapshot).toBe(snapshot)
+      expect(unhandled).toEqual([])
+      await expect(persister.flush()).resolves.toBeUndefined()
+      expect(save).toHaveBeenCalledTimes(2)
+    } finally {
+      rejectionEmitter.off('unhandledRejection', processListener)
+      window.removeEventListener('unhandledrejection', browserListener)
+    }
+  })
+
   it('propagates flush failures without changing the caller snapshot', async () => {
     vi.useFakeTimers()
     const failure = new Error('storage unavailable')
