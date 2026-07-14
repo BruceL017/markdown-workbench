@@ -53,7 +53,7 @@ export function createWorkbenchModel(document?: WorkspaceDocument): Model {
           type: 'tabset',
           id: 'workbench-pane-1',
           active: true,
-          children: document ? [documentTab(document, 'workbench-tab-1')] : [],
+          children: document ? [createDocumentTabJson(document, 'workbench-tab-1')] : [],
         },
       ],
     },
@@ -159,7 +159,7 @@ export function replaceDocumentInPane(
   } else {
     model.doAction(
       Actions.addTab(
-        documentTab(document, nextTabId(model)),
+        createDocumentTabJson(document, nextTabId(model)),
         target.getId(),
         DockLocation.CENTER,
         -1,
@@ -187,7 +187,7 @@ export function addDocumentSplit(
 
   const addedNode = model.doAction(
     Actions.addTab(
-      documentTab(document, nextTabId(model)),
+      createDocumentTabJson(document, nextTabId(model)),
       target.getId(),
       directionLocation[direction],
       -1,
@@ -291,10 +291,13 @@ function emptyTabset(index: number): IJsonTabSetNode {
   }
 }
 
-function documentTab(document: WorkspaceDocument, id: string): IJsonTabNode {
+export function createDocumentTabJson(
+  document: WorkspaceDocument,
+  id?: string,
+): IJsonTabNode {
   return {
     type: 'tab',
-    id,
+    ...(id ? { id } : {}),
     component: 'document',
     name: document.name,
     helpText: document.virtualPath,

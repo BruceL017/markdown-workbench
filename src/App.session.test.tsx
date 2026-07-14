@@ -6,7 +6,10 @@ import { App } from './App'
 import type { WorkspaceDocument, WorkspaceSnapshot } from './domain/workspace'
 import { AssetRegistry } from './files/assetRegistry'
 import type { FileAdapter, OpenResult, SaveResult } from './files/fileAdapter'
-import { InMemoryFileHandleRegistry } from './files/nativeFileAdapter'
+import {
+  InMemoryFileHandleRegistry,
+  NativeFileAdapter,
+} from './files/nativeFileAdapter'
 import { createWorkbenchModel, serializeWorkbenchLayout } from './layout/workbenchLayout'
 import type { WorkspacePersistence } from './persistence/indexedDbWorkspace'
 import { createWorkspaceStore } from './state/workspaceStore'
@@ -179,6 +182,70 @@ describe('App session lifecycle', () => {
 
     await user.click(screen.getByRole('button', { name: 'Save native.md' }))
     expect(requestWritePermission).toHaveBeenCalledOnce()
+  })
+
+  it('writes an edited document through the real native adapter after explicit permission', async () => {
+    const user = userEvent.setup()
+    const assetRegistry = new AssetRegistry({
+      createObjectURL: () => 'blob:test',
+      revokeObjectURL: () => undefined,
+    })
+    const handleRegistry = new InMemoryFileHandleRegistry()
+    let permission: PermissionState = 'prompt'
+    let diskText = '# Original'
+    let lastModified = 1
+    let pendingText = diskText
+    const requestPermission = vi.fn(async () => {
+      permission = 'granted'
+      return permission
+    })
+    const handle = {
+      kind: 'file',
+      name: 'native.md',
+      queryPermission: vi.fn(async () => permission),
+      requestPermission,
+      getFile: vi.fn(async () => new File([diskText], 'native.md', { lastModified })),
+      createWritable: vi.fn(async () => ({
+        write: vi.fn(async (text: string) => { pendingText = text }),
+        close: vi.fn(async () => {
+          diskText = pendingText
+          lastModified += 1
+        }),
+        abort: vi.fn(async () => undefined),
+      })),
+      isSameEntry: vi.fn(async () => false),
+    } as unknown as FileSystemFileHandle
+    const nativeAdapter = new NativeFileAdapter({
+      assetRegistry,
+      handleRegistry,
+      environment: {
+        isSecureContext: true,
+        showOpenFilePicker: vi.fn(async () => [handle]),
+      },
+      createId: () => 'native-real',
+      createHandleKey: () => 'native-real:key',
+      now: () => 2,
+    })
+    const workbench: WorkbenchRuntime = {
+      store: createWorkspaceStore(),
+      assetRegistry,
+      nativeHandleRegistry: handleRegistry,
+      nativeAdapter,
+      fallbackAdapter: adapter(),
+    }
+    render(<App runtime={workbench} />)
+
+    await user.click(screen.getByRole('button', { name: 'Open files' }))
+    act(() => workbench.store.getState().updateDocumentText('native-real', '# Edited locally'))
+    await user.click(screen.getByRole('button', { name: 'Save native.md' }))
+
+    await waitFor(() => expect(diskText).toBe('# Edited locally'))
+    expect(requestPermission).toHaveBeenCalledWith({ mode: 'readwrite' })
+    expect(workbench.store.getState().documents['native-real']).toMatchObject({
+      savedText: '# Edited locally',
+      dirty: false,
+      diskFingerprint: { lastModified: 2, size: 16 },
+    })
   })
 
   it('keeps desktop layout unchanged at 1023px and restores split affordances at 1024px', async () => {

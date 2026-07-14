@@ -312,6 +312,10 @@ button[aria-disabled="true"] {
   inset: 0;
 }
 
+.drawer-layer {
+  pointer-events: none;
+}
+
 .drawer-backdrop {
   position: absolute;
   padding: 0;
@@ -320,6 +324,19 @@ button[aria-disabled="true"] {
   cursor: default;
   inset: 0;
   animation: overlay-in var(--motion-fast) ease-out;
+  pointer-events: auto;
+}
+
+.drawer-layer.is-dragging .drawer-backdrop {
+  pointer-events: none;
+}
+
+.drawer-layer.is-dragging .file-drawer {
+  opacity: 0.72;
+}
+
+.file-main-action[draggable="true"] {
+  cursor: grab;
 }
 
 .file-drawer {
@@ -336,6 +353,7 @@ button[aria-disabled="true"] {
   border-right: 1px solid var(--color-border);
   box-shadow: var(--shadow-overlay);
   animation: drawer-in var(--motion-fast) ease-out;
+  pointer-events: auto;
 }
 
 .drawer-header {

@@ -5,6 +5,7 @@ import type { WorkspaceDocument } from '../domain/workspace'
 import {
   activeDocumentId,
   addDocumentSplit,
+  createDocumentTabJson,
   createWorkbenchModel,
   focusDocument,
   isWorkbenchLayoutActionAllowed,
@@ -31,6 +32,19 @@ function document(id: string): WorkspaceDocument {
 }
 
 describe('workbench layout', () => {
+  it('creates a constrained document tab for external drawer docking', () => {
+    expect(createDocumentTabJson(document('one'))).toEqual({
+      type: 'tab',
+      component: 'document',
+      name: 'one.md',
+      helpText: 'notes/one.md',
+      config: { documentId: 'one' },
+      enableClose: false,
+      enablePopout: false,
+      enableRename: false,
+    })
+  })
+
   it('starts with one document and creates four deterministic split directions', () => {
     for (const [direction, expectedLocation] of [
       ['left', DockLocation.LEFT],

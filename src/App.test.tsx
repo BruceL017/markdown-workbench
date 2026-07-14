@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Model } from 'flexlayout-react'
 import { describe, expect, it, vi } from 'vitest'
@@ -236,6 +236,36 @@ describe('App', () => {
     expect(visibleIds(workbench)).toEqual(['first', 'second'])
     expect(workbench.store.getState().activeDocumentId).toBe('first')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Files' })).toHaveFocus())
+  })
+
+  it('offers desktop drawer documents as draggable edge-docking sources', async () => {
+    const user = userEvent.setup()
+    const workbench = runtime({ documents: [document('first'), document('second')] })
+    render(<App runtime={workbench} />)
+
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    const drawer = screen.getByRole('dialog', { name: 'Local files' })
+    const buffered = within(drawer).getByRole('button', { name: 'Open second.md' })
+    const visible = within(drawer).getByRole('button', { name: 'Open first.md' })
+
+    expect(buffered).toHaveAttribute('draggable', 'true')
+    expect(buffered).toHaveAccessibleDescription(/drag to a workspace edge/i)
+    expect(visible).not.toHaveAttribute('draggable', 'true')
+
+    fireEvent.dragStart(buffered, {
+      dataTransfer: {
+        setData: vi.fn(),
+        setDragImage: vi.fn(),
+        effectAllowed: '',
+        dropEffect: '',
+      },
+    })
+    expect(drawer.closest('.drawer-layer')).toHaveClass('is-dragging')
+
+    fireEvent.dragEnd(buffered)
+    expect(screen.getByRole('dialog', { name: 'Local files' })).toBeInTheDocument()
+    expect(drawer.closest('.drawer-layer')).not.toHaveClass('is-dragging')
+    expect(visibleIds(workbench)).toEqual(['first'])
   })
 
   it('does not move focus to Files for internal Markdown navigation', async () => {

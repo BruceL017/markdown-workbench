@@ -16,6 +16,7 @@ import {
   type Model,
   TabNode,
   type Action,
+  type ILayoutApi,
   type ITabRenderValues,
 } from 'flexlayout-react'
 import 'flexlayout-react/style/combined.css'
@@ -26,6 +27,7 @@ import {
   useState,
   useSyncExternalStore,
   type MouseEvent as ReactMouseEvent,
+  type DragEvent as ReactDragEvent,
   type ReactNode,
   type RefObject,
 } from 'react'
@@ -37,6 +39,7 @@ import { normalizeWorkspacePath } from './files/virtualPath'
 import {
   activeDocumentId,
   addDocumentSplit,
+  createDocumentTabJson,
   createWorkbenchModel,
   documentIdForTab,
   focusDocument,
@@ -191,6 +194,7 @@ function WorkbenchApp({
   const [clearing, setClearing] = useState(false)
   const fileButtonRef = useRef<HTMLButtonElement>(null)
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
+  const layoutRef = useRef<ILayoutApi>(null)
 
   const syncLayout = useCallback(() => {
     if (
@@ -267,6 +271,42 @@ function WorkbenchApp({
       syncLayout()
     },
     [model, runtime, syncLayout],
+  )
+
+  const beginDocumentDrag = useCallback(
+    (documentId: string, event: ReactDragEvent<HTMLButtonElement>) => {
+      if (!desktop) {
+        event.preventDefault()
+        return
+      }
+      if (focusDocument(model, documentId)) {
+        event.preventDefault()
+        syncLayout()
+        closeDrawer()
+        return
+      }
+
+      const document = runtime.store.getState().documents[documentId]
+      const layout = layoutRef.current
+      if (!document || !layout) {
+        event.preventDefault()
+        return
+      }
+
+      event.dataTransfer.setData('text/plain', '--markdown-workbench-document--')
+      event.dataTransfer.effectAllowed = 'copy'
+      layout.addTabWithDragAndDrop(
+        event.nativeEvent,
+        createDocumentTabJson(document),
+        (node) => {
+          if (!(node instanceof TabNode)) return
+          focusDocument(model, document.id)
+          syncLayout()
+          closeDrawer()
+        },
+      )
+    },
+    [closeDrawer, desktop, model, runtime, syncLayout],
   )
 
   const openLocal = useCallback(
@@ -694,6 +734,7 @@ function WorkbenchApp({
         ) : desktop ? (
           <div className={`workbench-layout flexlayout__theme_${resolvedTheme}`}>
             <Layout
+              ref={layoutRef}
               model={model}
               factory={factory}
               onAction={handleLayoutAction}
@@ -736,6 +777,7 @@ function WorkbenchApp({
             splitDocument(documentId, direction)
             closeDrawer()
           }}
+          onDragStart={beginDocumentDrag}
         />
       ) : null}
 
@@ -857,6 +899,7 @@ function FileDrawer({
   onOpen,
   onSelect,
   onSplit,
+  onDragStart,
 }: {
   id: string
   documents: WorkspaceDocument[]
@@ -869,13 +912,18 @@ function FileDrawer({
   onOpen: (kind: 'files' | 'folder') => void
   onSelect: (documentId: string) => void
   onSplit: (documentId: string, direction: SplitDirection) => void
+  onDragStart: (
+    documentId: string,
+    event: ReactDragEvent<HTMLButtonElement>,
+  ) => void
 }) {
+  const [draggingDocumentId, setDraggingDocumentId] = useState<string | null>(null)
   const sortedDocuments = [...documents].sort((a, b) =>
     a.virtualPath.localeCompare(b.virtualPath, undefined, { numeric: true }),
   )
 
   return (
-    <div className="drawer-layer">
+    <div className={`drawer-layer${draggingDocumentId ? ' is-dragging' : ''}`}>
       <button
         type="button"
         className="drawer-backdrop"
@@ -937,6 +985,16 @@ function FileDrawer({
                     type="button"
                     className="file-main-action"
                     aria-label={`Open ${document.name}`}
+                    aria-description={!visible && canSplit
+                      ? 'Drag to a workspace edge to create a pane.'
+                      : undefined}
+                    draggable={!visible && canSplit}
+                    onDragStart={(event) => {
+                      if (visible || !canSplit) return
+                      setDraggingDocumentId(document.id)
+                      onDragStart(document.id, event)
+                    }}
+                    onDragEnd={() => setDraggingDocumentId(null)}
                     onClick={() => onSelect(document.id)}
                   >
                     <FileMd aria-hidden />
