@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Gear,
   ShieldCheck,
+  Trash,
   X,
 } from '@phosphor-icons/react'
 import {
@@ -33,9 +34,15 @@ import {
 } from 'react'
 
 import { MarkdownEditor } from './editor/MarkdownEditor'
-import type { DiskFingerprint, WorkspaceDocument } from './domain/workspace'
+import type { DiskFingerprint, Locale, WorkspaceDocument } from './domain/workspace'
 import type { OpenResult, SaveResult } from './files/fileAdapter'
 import { normalizeWorkspacePath } from './files/virtualPath'
+import {
+  resolveLocale,
+  translate,
+  useWorkspaceLocale,
+  WorkspaceLocaleProvider,
+} from './i18n/workspaceLocale'
 import {
   activeDocumentId,
   addDocumentSplit,
@@ -72,26 +79,41 @@ interface ConflictState {
 
 type SaveOutcome = 'saved' | 'conflict' | 'failed'
 
+type DocumentIntentKind = 'close-pane' | 'remove-workspace'
+
+interface DocumentIntent {
+  documentId: string
+  kind: DocumentIntentKind
+}
+
+interface TransientNotice {
+  id: number
+  kind: 'status' | 'error'
+  text: string
+}
+
 const splitActions: Array<{
   direction: SplitDirection
-  label: string
   icon: ReactNode
 }> = [
-  { direction: 'left', label: 'left', icon: <ArrowLineLeft aria-hidden /> },
-  { direction: 'right', label: 'right', icon: <ArrowLineRight aria-hidden /> },
-  { direction: 'top', label: 'top', icon: <ArrowLineUp aria-hidden /> },
-  { direction: 'bottom', label: 'bottom', icon: <ArrowLineDown aria-hidden /> },
+  { direction: 'left', icon: <ArrowLineLeft aria-hidden /> },
+  { direction: 'right', icon: <ArrowLineRight aria-hidden /> },
+  { direction: 'top', icon: <ArrowLineUp aria-hidden /> },
+  { direction: 'bottom', icon: <ArrowLineDown aria-hidden /> },
 ]
+
+const splitDirectionMessages = {
+  left: 'drawer.direction.left',
+  right: 'drawer.direction.right',
+  top: 'drawer.direction.top',
+  bottom: 'drawer.direction.bottom',
+} as const
 
 export function App({ runtime: suppliedRuntime }: AppProps) {
   const [runtime] = useState(() => suppliedRuntime ?? createWorkbenchRuntime())
-  const [sessionFailure, setSessionFailure] = useState<{ message: string } | null>(null)
+  const [sessionFailure, setSessionFailure] = useState<unknown>(null)
   const [session] = useState(() => createWorkspaceSession(runtime, {
-    onError: (error) => {
-      setSessionFailure({
-        message: messageForError(error, 'Local recovery data could not be saved.'),
-      })
-    },
+    onError: setSessionFailure,
   }))
   const workspace = useSyncExternalStore(
     runtime.store.subscribe,
@@ -111,6 +133,12 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
     )
   })
   const resolvedTheme = useWorkspaceTheme(workspace.theme)
+  const resolvedLocale = resolveLocale(workspace.locale)
+
+  useEffect(() => {
+    document.documentElement.lang = resolvedLocale
+    document.title = translate(resolvedLocale, 'app.title')
+  }, [resolvedLocale])
 
   useEffect(() => {
     if (model) {
@@ -139,24 +167,28 @@ export function App({ runtime: suppliedRuntime }: AppProps) {
 
   if (!model) {
     return (
-      <div className="bootstrap-state" role="status" aria-live="polite">
-        Restoring local workspace…
-      </div>
+      <WorkspaceLocaleProvider locale={resolvedLocale}>
+        <div className="bootstrap-state" role="status" aria-live="polite">
+          {translate(resolvedLocale, 'app.restoring')}
+        </div>
+      </WorkspaceLocaleProvider>
     )
   }
 
   return (
-    <WorkbenchApp
-      runtime={runtime}
-      model={model}
-      session={session}
-      resolvedTheme={resolvedTheme}
-      sessionFailure={sessionFailure}
-      onClearLocalData={async () => {
-        await session.clear()
-        setModel(createWorkbenchModel())
-      }}
-    />
+    <WorkspaceLocaleProvider locale={resolvedLocale}>
+      <WorkbenchApp
+        runtime={runtime}
+        model={model}
+        session={session}
+        resolvedTheme={resolvedTheme}
+        sessionFailure={sessionFailure}
+        onClearLocalData={async () => {
+          await session.clear()
+          setModel(createWorkbenchModel())
+        }}
+      />
+    </WorkspaceLocaleProvider>
   )
 }
 
@@ -172,9 +204,10 @@ function WorkbenchApp({
   model: Model
   session: WorkspaceSession
   resolvedTheme: ResolvedTheme
-  sessionFailure: { message: string } | null
+  sessionFailure: unknown
   onClearLocalData: () => Promise<void>
 }) {
+  const { locale, t } = useWorkspaceLocale()
   const workspace = useSyncExternalStore(
     runtime.store.subscribe,
     runtime.store.getState,
@@ -184,10 +217,9 @@ function WorkbenchApp({
   const [busyAction, setBusyAction] = useState<'files' | 'folder' | null>(null)
   const [savingDocumentId, setSavingDocumentId] = useState<string | null>(null)
   const [conflict, setConflict] = useState<ConflictState | null>(null)
-  const [closeRequest, setCloseRequest] = useState<string | null>(null)
-  const [closeAfterSave, setCloseAfterSave] = useState<string | null>(null)
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState('')
+  const [documentRequest, setDocumentRequest] = useState<DocumentIntent | null>(null)
+  const [afterSaveIntent, setAfterSaveIntent] = useState<DocumentIntent | null>(null)
+  const [notice, setNotice] = useState<TransientNotice | null>(null)
   const [desktop, setDesktop] = useState(() => globalThis.innerWidth >= 1024)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [clearConfirmation, setClearConfirmation] = useState(false)
@@ -195,6 +227,25 @@ function WorkbenchApp({
   const fileButtonRef = useRef<HTMLButtonElement>(null)
   const settingsButtonRef = useRef<HTMLButtonElement>(null)
   const layoutRef = useRef<ILayoutApi>(null)
+  const noticeSequence = useRef(0)
+  const documentIntentOriginRef = useRef<HTMLElement | null>(null)
+
+  const showNotice = useCallback((kind: TransientNotice['kind'], text: string) => {
+    noticeSequence.current += 1
+    setNotice({ id: noticeSequence.current, kind, text })
+  }, [])
+
+  const showStatus = useCallback((text: string) => showNotice('status', text), [showNotice])
+  const showError = useCallback((text: string) => showNotice('error', text), [showNotice])
+
+  useEffect(() => {
+    if (!notice) return
+    const timer = globalThis.setTimeout(
+      () => setNotice((current) => current?.id === notice.id ? null : current),
+      notice.kind === 'status' ? 3_000 : 6_000,
+    )
+    return () => globalThis.clearTimeout(timer)
+  }, [notice])
 
   const syncLayout = useCallback(() => {
     if (
@@ -213,8 +264,10 @@ function WorkbenchApp({
   }, [syncLayout])
 
   useEffect(() => {
-    if (sessionFailure) setError(sessionFailure.message)
-  }, [sessionFailure])
+    if (sessionFailure) {
+      showError(messageForError(sessionFailure, t('error.recoverySave')))
+    }
+  }, [sessionFailure, showError, t])
 
   useEffect(() => {
     const onResize = () => setDesktop(globalThis.innerWidth >= 1024)
@@ -226,6 +279,7 @@ function WorkbenchApp({
     if (!drawerOpen) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
+      if (document.querySelector('[aria-modal="true"]')) return
       setDrawerOpen(false)
       fileButtonRef.current?.focus()
     }
@@ -311,8 +365,7 @@ function WorkbenchApp({
 
   const openLocal = useCallback(
     async (kind: 'files' | 'folder') => {
-      setError('')
-      setMessage('')
+      setNotice(null)
       setBusyAction(kind)
       const capability = kind === 'files' ? 'openFiles' : 'openDirectory'
       const adapter = runtime.nativeAdapter.capabilities[capability]
@@ -325,12 +378,15 @@ function WorkbenchApp({
           : await adapter.openDirectory()
         await acceptOpenResult(result)
       } catch (openError) {
-        setError(messageForError(openError, `Could not open ${kind}.`))
+        showError(messageForError(
+          openError,
+          kind === 'files' ? t('error.openFiles') : t('error.openFolder'),
+        ))
       } finally {
         setBusyAction(null)
       }
     },
-    [model, runtime, syncLayout],
+    [model, runtime, showError, syncLayout, t],
   )
 
   const acceptOpenResult = useCallback(
@@ -368,13 +424,13 @@ function WorkbenchApp({
       }
 
       if (resultDocuments.length > 1) setDrawerOpen(true)
-      setMessage(
+      showStatus(
         resultDocuments.length === 1
-          ? `Opened ${resultDocuments[0].name}.`
-          : `Opened ${resultDocuments.length} Markdown files.`,
+          ? t('status.openedOne', { name: resultDocuments[0].name })
+          : t('status.openedMany', { count: resultDocuments.length }),
       )
     },
-    [model, runtime, session, syncLayout],
+    [model, runtime, session, showStatus, syncLayout, t],
   )
 
   const performSave = useCallback(
@@ -385,15 +441,14 @@ function WorkbenchApp({
         ? runtime.nativeAdapter
         : runtime.fallbackAdapter
       setSavingDocumentId(documentId)
-      setError('')
-      setMessage('')
+      setNotice(null)
 
       try {
         let result = await adapter.save(document, force ? { force: true } : undefined)
         if (result.status === 'permission-required') {
           const permission = await adapter.requestWritePermission(document)
           if (permission !== 'granted') {
-            setError('Write permission was not granted. Your draft is still safe locally.')
+            showError(t('error.writePermission'))
             return 'failed'
           }
           result = await adapter.save(document, force ? { force: true } : undefined)
@@ -401,13 +456,13 @@ function WorkbenchApp({
 
         return finishSave(document, result)
       } catch (saveError) {
-        setError(messageForError(saveError, 'Save failed. Your unsaved draft was kept.'))
+        showError(messageForError(saveError, t('error.saveFailed')))
         return 'failed'
       } finally {
         setSavingDocumentId(null)
       }
     },
-    [runtime],
+    [runtime, showError, t],
   )
 
   const finishSave = useCallback(
@@ -427,14 +482,14 @@ function WorkbenchApp({
           fingerprint: result.fingerprint,
         })
         setConflict(null)
-        setMessage(`Saved ${document.name} to the original file.`)
+        showStatus(t('status.savedOriginal', { name: document.name }))
         return 'saved'
       }
 
       if (result.status === 'downloaded') {
         runtime.store.getState().markDocumentSaved(document.id, { text: document.text })
         setConflict(null)
-        setMessage(`Download started for ${result.filename}.`)
+        showStatus(t('status.downloadStarted', { name: result.filename }))
         return 'saved'
       }
 
@@ -442,56 +497,148 @@ function WorkbenchApp({
         Extract<SaveResult, { status: 'permission-denied' | 'permission-required' | 'unavailable' }>['status'],
         string
       > = {
-        'permission-denied': 'Write permission was denied. Your draft is still safe locally.',
-        'permission-required': 'Write permission is still required. Your draft was kept.',
-        unavailable: 'The original file is unavailable. Your draft was kept.',
+        'permission-denied': t('error.permissionDenied'),
+        'permission-required': t('error.permissionRequired'),
+        unavailable: t('error.unavailable'),
       }
-      setError(failureMessages[result.status])
+      showError(failureMessages[result.status])
       return 'failed'
     },
-    [runtime],
+    [runtime, showError, showStatus, t],
   )
 
   const closePane = useCallback(
     (documentId: string) => {
       removeDocumentPane(model, documentId)
       syncLayout()
-      setCloseRequest(null)
-      setCloseAfterSave((pendingId) => pendingId === documentId ? null : pendingId)
+      setDocumentRequest(null)
+      setAfterSaveIntent((pending) => pending?.documentId === documentId ? null : pending)
     },
     [model, syncLayout],
   )
 
-  const requestClosePane = useCallback(
-    (documentId: string) => {
-      const document = runtime.store.getState().documents[documentId]
-      if (!document) return
-      if (document.dirty) setCloseRequest(documentId)
-      else closePane(documentId)
+  const removeFromWorkspace = useCallback(
+    async (documentId: string) => {
+      const state = runtime.store.getState()
+      const removed = state.documents[documentId]
+      if (!removed) return
+      const ordered = sortWorkspaceDocuments(
+        state.documentOrder.map((id) => state.documents[id]),
+        locale,
+      )
+      const removedIndex = ordered.findIndex((document) => document.id === documentId)
+      const replacement = ordered[removedIndex + 1] ?? ordered[removedIndex - 1]
+      const paneId = paneIdForDocument(model, documentId)
+
+      if (paneId) {
+        if (!replacement) {
+          removeDocumentPane(model, documentId)
+        } else if (focusDocument(model, replacement.id)) {
+          removeDocumentPane(model, documentId)
+        } else {
+          replaceDocumentInPane(model, replacement, paneId)
+        }
+      }
+
+      runtime.store.getState().removeDocument(documentId)
+      if (runtime.store.getState().documentOrder.length === 0) {
+        runtime.assetRegistry.clear()
+      }
+      syncLayout()
+      setDocumentRequest(null)
+      setAfterSaveIntent((pending) => pending?.documentId === documentId ? null : pending)
+
+      globalThis.requestAnimationFrame?.(() => focusDrawerAfterRemoval(replacement?.id))
+
+      try {
+        await session.forgetDocument(removed)
+        showStatus(t('status.removed', { name: removed.name }))
+      } catch {
+        showError(t('error.removeCleanup'))
+      }
     },
-    [closePane, runtime],
+    [locale, model, runtime, session, showError, showStatus, syncLayout, t],
   )
 
-  const saveAndClose = useCallback(async () => {
-    if (!closeRequest) return
-    const documentId = closeRequest
-    setCloseRequest(null)
-    setCloseAfterSave(documentId)
-    const outcome = await performSave(documentId)
-    if (outcome === 'saved' && !runtime.store.getState().documents[documentId]?.dirty) {
-      closePane(documentId)
-    } else if (outcome === 'failed') {
-      setCloseAfterSave((pendingId) => pendingId === documentId ? null : pendingId)
-    }
-  }, [closePane, closeRequest, performSave, runtime])
-
-  const completeCloseIntent = useCallback(
-    (documentId: string) => {
-      if (closeAfterSave !== documentId) return
-      setCloseAfterSave(null)
-      closePane(documentId)
+  const completeIntent = useCallback(
+    async (intent: DocumentIntent) => {
+      if (intent.kind === 'close-pane') {
+        closePane(intent.documentId)
+      } else {
+        await removeFromWorkspace(intent.documentId)
+      }
     },
-    [closeAfterSave, closePane],
+    [closePane, removeFromWorkspace],
+  )
+
+  const requestDocumentIntent = useCallback(
+    (intent: DocumentIntent, origin?: HTMLElement) => {
+      const document = runtime.store.getState().documents[intent.documentId]
+      if (!document) return
+      if (document.dirty) {
+        documentIntentOriginRef.current = origin ?? null
+        setDocumentRequest(intent)
+      } else {
+        void completeIntent(intent)
+      }
+    },
+    [completeIntent, runtime],
+  )
+
+  const requestClosePane = useCallback(
+    (documentId: string) => requestDocumentIntent({
+      documentId,
+      kind: 'close-pane',
+    }),
+    [requestDocumentIntent],
+  )
+
+  const requestRemoveDocument = useCallback(
+    (documentId: string, origin: HTMLElement) => requestDocumentIntent({
+      documentId,
+      kind: 'remove-workspace',
+    }, origin),
+    [requestDocumentIntent],
+  )
+
+  const cancelDocumentIntent = useCallback(() => {
+    const origin = documentRequest?.kind === 'remove-workspace'
+      ? documentIntentOriginRef.current
+      : null
+    setDocumentRequest(null)
+    if (origin) {
+      globalThis.requestAnimationFrame?.(() => {
+        if (origin.isConnected) origin.focus()
+      })
+    }
+  }, [documentRequest])
+
+  const saveAndCompleteIntent = useCallback(async () => {
+    if (!documentRequest) return
+    const intent = documentRequest
+    setDocumentRequest(null)
+    setAfterSaveIntent(intent)
+    const outcome = await performSave(intent.documentId)
+    if (outcome === 'saved') {
+      if (!runtime.store.getState().documents[intent.documentId]?.dirty) {
+        await completeIntent(intent)
+      } else {
+        setAfterSaveIntent((pending) =>
+          pending?.documentId === intent.documentId ? null : pending)
+      }
+    } else if (outcome === 'failed') {
+      setAfterSaveIntent((pending) => pending?.documentId === intent.documentId ? null : pending)
+    }
+  }, [completeIntent, documentRequest, performSave, runtime])
+
+  const completeAfterSaveIntent = useCallback(
+    async (documentId: string) => {
+      if (afterSaveIntent?.documentId !== documentId) return
+      const intent = afterSaveIntent
+      setAfterSaveIntent(null)
+      await completeIntent(intent)
+    },
+    [afterSaveIntent, completeIntent],
   )
 
   const reloadConflict = useCallback(() => {
@@ -501,46 +648,47 @@ function WorkbenchApp({
       text: conflict.diskText,
       fingerprint: conflict.fingerprint,
     })
-    const name = runtime.store.getState().documents[conflict.documentId]?.name ?? 'document'
-    setMessage(`Reloaded ${name} from disk.`)
+    const name = runtime.store.getState().documents[conflict.documentId]?.name
+      ?? t('document.generic')
+    showStatus(t('status.reloaded', { name }))
     setConflict(null)
-    completeCloseIntent(conflict.documentId)
-  }, [completeCloseIntent, conflict, runtime])
+    void completeAfterSaveIntent(conflict.documentId)
+  }, [completeAfterSaveIntent, conflict, runtime, showStatus, t])
 
   const downloadConflictCopy = useCallback(async () => {
     if (!conflict) return
     const document = runtime.store.getState().documents[conflict.documentId]
     if (!document) return
     setSavingDocumentId(document.id)
-    setError('')
+    setNotice(null)
     try {
       const result = await runtime.fallbackAdapter.save(document)
       if (result.status === 'downloaded') {
         runtime.store.getState().markDocumentSaved(document.id, { text: document.text })
-        setMessage(`Download started for ${result.filename}.`)
+        showStatus(t('status.downloadStarted', { name: result.filename }))
         setConflict(null)
-        completeCloseIntent(document.id)
+        await completeAfterSaveIntent(document.id)
       } else {
-        setError('Could not start a download. Your draft was kept.')
+        showError(t('error.downloadStart'))
       }
     } catch (downloadError) {
-      setError(messageForError(downloadError, 'Could not download a copy. Your draft was kept.'))
+      showError(messageForError(downloadError, t('error.downloadCopy')))
     } finally {
       setSavingDocumentId(null)
     }
-  }, [completeCloseIntent, conflict, runtime])
+  }, [completeAfterSaveIntent, conflict, runtime, showError, showStatus, t])
 
   const overwriteConflict = useCallback(async () => {
     if (!conflict) return
     const documentId = conflict.documentId
     const outcome = await performSave(documentId, true)
     if (outcome === 'saved') {
-      completeCloseIntent(documentId)
+      await completeAfterSaveIntent(documentId)
     } else if (outcome === 'failed') {
       setConflict(null)
-      setCloseAfterSave((pendingId) => pendingId === documentId ? null : pendingId)
+      setAfterSaveIntent((pending) => pending?.documentId === documentId ? null : pending)
     }
-  }, [completeCloseIntent, conflict, performSave])
+  }, [completeAfterSaveIntent, conflict, performSave])
 
   const openInternalDocument = useCallback(
     (path: string, currentDocumentId: string, hash?: string) => {
@@ -550,13 +698,13 @@ function WorkbenchApp({
         (id) => state.documents[id]?.virtualPath === normalizedPath,
       )
       if (!targetId) {
-        setError(`Linked document is not open: ${normalizedPath}`)
+        showError(t('error.linkedDocument', { path: normalizedPath }))
         return
       }
       showDocument(targetId, paneIdForDocument(model, currentDocumentId))
       scrollToDocumentAnchor(targetId, hash)
     },
-    [model, runtime, showDocument],
+    [model, runtime, showDocument, showError, t],
   )
 
   const handleLayoutAction = useCallback((action: Action) => {
@@ -578,7 +726,7 @@ function WorkbenchApp({
           {document.dirty ? (
             <span
               className="dirty-dot"
-              aria-label={`${document.name} has unsaved changes`}
+              aria-label={t('document.dirty', { name: document.name })}
             />
           ) : null}
           <span className="pane-tab-name">{document.name}</span>
@@ -587,37 +735,41 @@ function WorkbenchApp({
       )
       renderValues.buttons = [
         <span className="pane-tab-actions" key={`actions-${document.id}`}>
-          <span className="mode-switch" role="group" aria-label={`View ${document.name}`}>
+          <span
+            className="mode-switch"
+            role="group"
+            aria-label={t('document.view', { name: document.name })}
+          >
             <button
               type="button"
               className={document.viewMode === 'source' ? 'is-active' : undefined}
-              aria-label={`Show source for ${document.name}`}
+              aria-label={t('document.showSource', { name: document.name })}
               aria-pressed={document.viewMode === 'source'}
               onClick={(event) => {
                 stopTabEvent(event)
                 runtime.store.getState().setDocumentViewMode(document.id, 'source')
               }}
             >
-              Source
+              {t('document.source')}
             </button>
             <button
               type="button"
               className={document.viewMode === 'preview' ? 'is-active' : undefined}
-              aria-label={`Show preview for ${document.name}`}
+              aria-label={t('document.showPreview', { name: document.name })}
               aria-pressed={document.viewMode === 'preview'}
               onClick={(event) => {
                 stopTabEvent(event)
                 runtime.store.getState().setDocumentViewMode(document.id, 'preview')
               }}
             >
-              Preview
+              {t('document.preview')}
             </button>
           </span>
           <button
             type="button"
             className="icon-button"
-            aria-label={`Save ${document.name}`}
-            title="Save (⌘S / Ctrl+S)"
+            aria-label={t('document.save', { name: document.name })}
+            title={t('document.saveTitle')}
             disabled={savingDocumentId === document.id}
             onClick={(event) => {
               stopTabEvent(event)
@@ -629,8 +781,8 @@ function WorkbenchApp({
           <button
             type="button"
             className="icon-button"
-            aria-label={`Close ${document.name}`}
-            title="Close pane"
+            aria-label={t('document.close', { name: document.name })}
+            title={t('document.closeTitle')}
             onClick={(event) => {
               stopTabEvent(event)
               requestClosePane(document.id)
@@ -641,7 +793,7 @@ function WorkbenchApp({
         </span>,
       ]
     },
-    [performSave, requestClosePane, runtime, savingDocumentId, workspace.documents],
+    [performSave, requestClosePane, runtime, savingDocumentId, t, workspace.documents],
   )
 
   const factory = useCallback(
@@ -667,45 +819,68 @@ function WorkbenchApp({
     : visibleIds[0] ?? null
   const activeMobileDocument = activeId ? workspace.documents[activeId] : undefined
   const directSave = runtime.nativeAdapter.capabilities.writeBack
+  const fileCountKey = workspace.documentOrder.length === 1
+    ? 'files.countOne'
+    : 'files.countMany'
 
   return (
-    <main className="app-shell" aria-label="Markdown Workbench">
+    <main className="app-shell" aria-label={t('app.title')}>
       <a className="skip-link" href="#document-workspace">
-        Skip to document workspace
+        {t('app.skipWorkspace')}
       </a>
       <header className="topbar">
         <div className="brand-lockup">
           <FileMd size={20} weight="fill" aria-hidden />
-          <span translate="no">Markdown Workbench</span>
+          <span>{t('app.title')}</span>
         </div>
         <div className="topbar-actions">
           <span className="capability-label" title={directSave
-            ? 'This browser can save changes back to approved local files.'
-            : 'This browser saves edited files by downloading a copy.'}
+            ? t('capability.directTitle')
+            : t('capability.downloadTitle')}
           >
             <ShieldCheck aria-hidden />
-            {directSave ? 'Direct save' : 'Download save'}
+            {directSave ? t('capability.direct') : t('capability.download')}
           </span>
+          <div className="language-control" role="group" aria-label={t('language.label')}>
+            <button
+              type="button"
+              aria-label={t('language.chinese')}
+              aria-pressed={locale === 'zh-CN'}
+              className={locale === 'zh-CN' ? 'is-active' : undefined}
+              onClick={() => runtime.store.getState().setLocale('zh-CN' satisfies Locale)}
+            >
+              中
+            </button>
+            <button
+              type="button"
+              aria-label={t('language.english')}
+              aria-pressed={locale === 'en'}
+              className={locale === 'en' ? 'is-active' : undefined}
+              onClick={() => runtime.store.getState().setLocale('en' satisfies Locale)}
+            >
+              EN
+            </button>
+          </div>
           <label className="theme-control">
-            <span>Theme</span>
+            <span>{t('theme.label')}</span>
             <select
-              aria-label="Theme"
+              aria-label={t('theme.label')}
               value={workspace.theme}
               onChange={(event) => runtime.store.getState().setTheme(
                 event.currentTarget.value as 'system' | 'light' | 'dark',
               )}
             >
-              <option value="system">System</option>
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
+              <option value="system">{t('theme.system')}</option>
+              <option value="light">{t('theme.light')}</option>
+              <option value="dark">{t('theme.dark')}</option>
             </select>
           </label>
           <button
             ref={settingsButtonRef}
             type="button"
             className="icon-button"
-            aria-label="Privacy and local data"
-            title="Privacy and local data"
+            aria-label={t('settings.open')}
+            title={t('settings.open')}
             aria-haspopup="dialog"
             onClick={() => setSettingsOpen(true)}
           >
@@ -715,15 +890,18 @@ function WorkbenchApp({
             ref={fileButtonRef}
             type="button"
             className="toolbar-button"
-            aria-label="Files"
+            aria-label={t('files.button')}
             aria-expanded={drawerOpen}
             aria-controls="file-drawer"
             onClick={() => setDrawerOpen((open) => !open)}
           >
             <Files aria-hidden />
-            Files
+            <span className="files-button-label">{t('files.button')}</span>
             {workspace.documentOrder.length ? (
-              <span className="file-count" aria-label={`${workspace.documentOrder.length} files`}>
+              <span
+                className="file-count"
+                aria-label={t(fileCountKey, { count: workspace.documentOrder.length })}
+              >
                 {workspace.documentOrder.length}
               </span>
             ) : null}
@@ -734,7 +912,7 @@ function WorkbenchApp({
       <section
         id="document-workspace"
         className="workspace-stage"
-        aria-label="Document workspace"
+        aria-label={t('app.workspace')}
         tabIndex={-1}
       >
         {visibleIds.length === 0 ? (
@@ -786,17 +964,25 @@ function WorkbenchApp({
             closeDrawer()
           }}
           onDragStart={beginDocumentDrag}
+          onRemove={requestRemoveDocument}
         />
       ) : null}
 
-      <div className="live-region" aria-live="polite" aria-atomic="true">
-        {message ? <p className="toast toast-status" role="status">{message}</p> : null}
-        {error ? <p className="toast toast-error" role="alert">{error}</p> : null}
-      </div>
+      {notice ? (
+        <div className="notice-region">
+          <p
+            className={`notice notice-${notice.kind}`}
+            role={notice.kind === 'error' ? 'alert' : 'status'}
+            aria-atomic="true"
+          >
+            {notice.text}
+          </p>
+        </div>
+      ) : null}
 
       {conflict ? (
         <ConflictDialog
-          documentName={workspace.documents[conflict.documentId]?.name ?? 'document'}
+          documentName={workspace.documents[conflict.documentId]?.name ?? t('document.generic')}
           busy={savingDocumentId === conflict.documentId}
           onReload={reloadConflict}
           onDownload={() => void downloadConflictCopy()}
@@ -805,13 +991,14 @@ function WorkbenchApp({
         />
       ) : null}
 
-      {closeRequest ? (
+      {documentRequest ? (
         <CloseGuardDialog
-          documentName={workspace.documents[closeRequest]?.name ?? 'document'}
-          busy={savingDocumentId === closeRequest}
-          onCancel={() => setCloseRequest(null)}
-          onDiscard={() => closePane(closeRequest)}
-          onSave={() => void saveAndClose()}
+          documentName={workspace.documents[documentRequest.documentId]?.name ?? t('document.generic')}
+          busy={savingDocumentId === documentRequest.documentId}
+          intentKind={documentRequest.kind}
+          onCancel={cancelDocumentIntent}
+          onDiscard={() => void completeIntent(documentRequest)}
+          onSave={() => void saveAndCompleteIntent()}
           returnFocusRef={fileButtonRef}
         />
       ) : null}
@@ -835,13 +1022,16 @@ function WorkbenchApp({
           onCancel={() => setClearConfirmation(false)}
           onClear={async () => {
             setClearing(true)
-            setError('')
+            setNotice(null)
             try {
               await onClearLocalData()
               setClearConfirmation(false)
-              setMessage('Local recovery data was cleared.')
+              showStatus(translate(
+                resolveLocale(runtime.store.getState().locale),
+                'status.cleared',
+              ))
             } catch (clearError) {
-              setError(messageForError(clearError, 'Could not clear local data.'))
+              showError(messageForError(clearError, t('error.clear')))
             } finally {
               setClearing(false)
             }
@@ -860,13 +1050,13 @@ function EmptyWorkspace({
   busyAction: 'files' | 'folder' | null
   onOpen: (kind: 'files' | 'folder') => void
 }) {
+  const { t } = useWorkspaceLocale()
+
   return (
     <div className="empty-workspace">
       <div className="empty-icon" aria-hidden><FileMd weight="duotone" /></div>
-      <h1>Open local Markdown</h1>
-      <p>
-        Read, edit, and arrange private notes without sending document contents to a server.
-      </p>
+      <h1>{t('empty.title')}</h1>
+      <p>{t('empty.description')}</p>
       <div className="empty-actions">
         <button
           type="button"
@@ -875,7 +1065,7 @@ function EmptyWorkspace({
           onClick={() => onOpen('files')}
         >
           <Files aria-hidden />
-          {busyAction === 'files' ? 'Opening…' : 'Open files'}
+          {busyAction === 'files' ? t('empty.opening') : t('empty.openFiles')}
         </button>
         <button
           type="button"
@@ -884,13 +1074,10 @@ function EmptyWorkspace({
           onClick={() => onOpen('folder')}
         >
           <FolderOpen aria-hidden />
-          {busyAction === 'folder' ? 'Opening…' : 'Open folder'}
+          {busyAction === 'folder' ? t('empty.opening') : t('empty.openFolder')}
         </button>
       </div>
-      <p className="privacy-note">
-        Files are read only in this browser and are never uploaded. Remote images in a document
-        may still contact their third-party host.
-      </p>
+      <p className="privacy-note">{t('empty.privacy')}</p>
     </div>
   )
 }
@@ -908,6 +1095,7 @@ function FileDrawer({
   onSelect,
   onSplit,
   onDragStart,
+  onRemove,
 }: {
   id: string
   documents: WorkspaceDocument[]
@@ -924,30 +1112,30 @@ function FileDrawer({
     documentId: string,
     event: ReactDragEvent<HTMLButtonElement>,
   ) => void
+  onRemove: (documentId: string, origin: HTMLElement) => void
 }) {
+  const { locale, t } = useWorkspaceLocale()
   const [draggingDocumentId, setDraggingDocumentId] = useState<string | null>(null)
-  const sortedDocuments = [...documents].sort((a, b) =>
-    a.virtualPath.localeCompare(b.virtualPath, undefined, { numeric: true }),
-  )
+  const sortedDocuments = sortWorkspaceDocuments(documents, locale)
 
   return (
     <div className={`drawer-layer${draggingDocumentId ? ' is-dragging' : ''}`}>
       <button
         type="button"
         className="drawer-backdrop"
-        aria-label="Close file drawer overlay"
+        aria-label={t('drawer.closeOverlay')}
         onClick={onClose}
       />
       <aside id={id} className="file-drawer" role="dialog" aria-modal="false" aria-labelledby="file-drawer-title">
         <header className="drawer-header">
           <div>
-            <p className="eyebrow">Workspace</p>
-            <h2 id="file-drawer-title">Local files</h2>
+            <p className="eyebrow">{t('drawer.eyebrow')}</p>
+            <h2 id="file-drawer-title">{t('drawer.title')}</h2>
           </div>
           <button
             type="button"
             className="icon-button"
-            aria-label="Close file drawer"
+            aria-label={t('drawer.close')}
             autoFocus
             onClick={onClose}
           >
@@ -959,10 +1147,11 @@ function FileDrawer({
           <button
             type="button"
             className="secondary-button"
+            data-drawer-open-files
             disabled={busyAction !== null}
             onClick={() => onOpen('files')}
           >
-            <Files aria-hidden /> Open files
+            <Files aria-hidden /> {t('empty.openFiles')}
           </button>
           <button
             type="button"
@@ -970,17 +1159,17 @@ function FileDrawer({
             disabled={busyAction !== null}
             onClick={() => onOpen('folder')}
           >
-            <FolderOpen aria-hidden /> Open folder
+            <FolderOpen aria-hidden /> {t('empty.openFolder')}
           </button>
         </div>
         <p className="drawer-capability">
           {nativeDirectory
-            ? 'Folder access and approved file write-back are available.'
-            : 'Compatibility mode: edits are saved by downloading a copy.'}
+            ? t('drawer.nativeCapability')
+            : t('drawer.fallbackCapability')}
         </p>
 
         <div className="file-list-heading">
-          <span>Markdown</span>
+          <span>{t('drawer.section')}</span>
           <span>{documents.length}</span>
         </div>
         {sortedDocuments.length ? (
@@ -988,13 +1177,17 @@ function FileDrawer({
             {sortedDocuments.map((document) => {
               const visible = visibleDocumentIds.has(document.id)
               return (
-                <li key={document.id} className={activeDocumentId === document.id ? 'is-active' : undefined}>
+                <li
+                  key={document.id}
+                  data-file-document-id={document.id}
+                  className={activeDocumentId === document.id ? 'is-active' : undefined}
+                >
                   <button
                     type="button"
                     className="file-main-action"
-                    aria-label={`Open ${document.name}`}
+                    aria-label={t('drawer.open', { name: document.name })}
                     aria-description={!visible && canSplit
-                      ? 'Drag to a workspace edge to create a pane.'
+                      ? t('drawer.dragDescription')
                       : undefined}
                     draggable={!visible && canSplit}
                     onDragStart={(event) => {
@@ -1009,39 +1202,63 @@ function FileDrawer({
                     <span>
                       <span className="file-name">
                         {document.name}
-                        {document.dirty ? <span className="file-dirty" aria-label="Unsaved">•</span> : null}
+                        {document.dirty ? (
+                          <span className="file-dirty" aria-label={t('drawer.unsaved')}>•</span>
+                        ) : null}
                       </span>
                       <span className="file-path">{document.virtualPath}</span>
                     </span>
-                    {visible ? <span className="visible-label">Visible</span> : null}
+                    {visible ? <span className="visible-label">{t('drawer.visible')}</span> : null}
                   </button>
-                  {canSplit ? (
-                    <div className="file-split-actions" role="group" aria-label={`Split ${document.name}`}>
-                      {splitActions.map(({ direction, label, icon }) => (
-                        <button
-                          key={direction}
-                          type="button"
-                          className="icon-button"
-                          aria-label={`Open ${document.name} in ${label} split`}
-                          title={`Open in ${label} split`}
-                          disabled={visible}
-                          onClick={() => onSplit(document.id, direction)}
-                        >
-                          {icon}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                  <div className="file-row-actions">
+                    {canSplit ? (
+                      <div
+                        className="file-split-actions"
+                        role="group"
+                        aria-label={t('drawer.splitGroup', { name: document.name })}
+                      >
+                        {splitActions.map(({ direction, icon }) => {
+                          const label = t(splitDirectionMessages[direction])
+                          return (
+                            <button
+                              key={direction}
+                              type="button"
+                              className="icon-button"
+                              aria-label={t('drawer.openSplit', {
+                                name: document.name,
+                                direction: label,
+                              })}
+                              title={t('drawer.openSplitTitle', { direction: label })}
+                              disabled={visible}
+                              onClick={() => onSplit(document.id, direction)}
+                            >
+                              {icon}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="icon-button file-remove-button"
+                      aria-label={t('drawer.remove', { name: document.name })}
+                      title={t('drawer.removeTitle')}
+                      disabled={busyAction !== null}
+                      onClick={(event) => onRemove(document.id, event.currentTarget)}
+                    >
+                      <Trash aria-hidden />
+                    </button>
+                  </div>
                 </li>
               )
             })}
           </ul>
         ) : (
-          <p className="drawer-empty">No Markdown files open.</p>
+          <p className="drawer-empty">{t('drawer.empty')}</p>
         )}
         <footer className="drawer-footer">
           <ShieldCheck aria-hidden />
-          Document text stays on this device. No telemetry.
+          {t('drawer.footer')}
         </footer>
       </aside>
     </div>
@@ -1059,12 +1276,14 @@ function DocumentPane({
   onSave: () => void
   onOpenDocument: (path: string, hash?: string) => void
 }) {
+  const { t } = useWorkspaceLocale()
+
   return (
     <div className="document-pane" data-workbench-document-pane={document.id}>
       {document.viewMode === 'source' ? (
         <MarkdownEditor
           value={document.text}
-          ariaLabel={`Edit ${document.name}`}
+          ariaLabel={t('document.edit', { name: document.name })}
           onChange={(text) => runtime.store.getState().updateDocumentText(document.id, text)}
           onSave={onSave}
         />
@@ -1075,7 +1294,7 @@ function DocumentPane({
             markdown={document.text}
             currentDocumentPath={document.virtualPath}
             assetRegistry={runtime.assetRegistry}
-            ariaLabel={`Preview ${document.name}`}
+            ariaLabel={t('document.previewLabel', { name: document.name })}
             onOpenDocument={onOpenDocument}
           />
         </div>
@@ -1099,33 +1318,37 @@ function MobileDocument({
   onClose: () => void
   onOpenDocument: (path: string, hash?: string) => void
 }) {
+  const { t } = useWorkspaceLocale()
+
   return (
     <section className="mobile-document" aria-label={document.name}>
       <header className="mobile-pane-header">
         <span className="mobile-title">
-          {document.dirty ? <span className="dirty-dot" aria-label={`${document.name} has unsaved changes`} /> : null}
+          {document.dirty ? (
+            <span className="dirty-dot" aria-label={t('document.dirty', { name: document.name })} />
+          ) : null}
           {document.name}
         </span>
-        <span className="mode-switch" role="group" aria-label={`View ${document.name}`}>
+        <span className="mode-switch" role="group" aria-label={t('document.view', { name: document.name })}>
           <button
             type="button"
             className={document.viewMode === 'source' ? 'is-active' : undefined}
-            aria-label={`Show source for ${document.name}`}
+            aria-label={t('document.showSource', { name: document.name })}
             aria-pressed={document.viewMode === 'source'}
             onClick={() => runtime.store.getState().setDocumentViewMode(document.id, 'source')}
-          >Source</button>
+          >{t('document.source')}</button>
           <button
             type="button"
             className={document.viewMode === 'preview' ? 'is-active' : undefined}
-            aria-label={`Show preview for ${document.name}`}
+            aria-label={t('document.showPreview', { name: document.name })}
             aria-pressed={document.viewMode === 'preview'}
             onClick={() => runtime.store.getState().setDocumentViewMode(document.id, 'preview')}
-          >Preview</button>
+          >{t('document.preview')}</button>
         </span>
-        <button type="button" className="icon-button" aria-label={`Save ${document.name}`} disabled={saving} onClick={onSave}>
+        <button type="button" className="icon-button" aria-label={t('document.save', { name: document.name })} disabled={saving} onClick={onSave}>
           <FloppyDisk aria-hidden />
         </button>
-        <button type="button" className="icon-button" aria-label={`Close ${document.name}`} onClick={onClose}>
+        <button type="button" className="icon-button" aria-label={t('document.close', { name: document.name })} onClick={onClose}>
           <X aria-hidden />
         </button>
       </header>
@@ -1157,25 +1380,24 @@ function ConflictDialog({
   returnFocusRef: RefObject<HTMLElement | null>
 }) {
   const dialogRef = useRef<HTMLElement>(null)
+  const { t } = useWorkspaceLocale()
   useModalFocus(dialogRef, returnFocusRef)
 
   return (
     <div className="dialog-layer">
       <section ref={dialogRef} className="decision-dialog" role="alertdialog" aria-modal="true" aria-labelledby="conflict-title" aria-describedby="conflict-description">
-        <p className="eyebrow">Save conflict</p>
-        <h2 id="conflict-title">{documentName} changed on disk</h2>
-        <p id="conflict-description">
-          Choose which version to keep. Your browser draft remains available until an action succeeds.
-        </p>
+        <p className="eyebrow">{t('conflict.eyebrow')}</p>
+        <h2 id="conflict-title">{t('conflict.title', { name: documentName })}</h2>
+        <p id="conflict-description">{t('conflict.description')}</p>
         <div className="dialog-actions dialog-actions-stack">
-          <button type="button" className="secondary-button" aria-label="Reload disk version" autoFocus disabled={busy} onClick={onReload}>
-            Reload disk version
+          <button type="button" className="secondary-button" aria-label={t('conflict.reload')} autoFocus disabled={busy} onClick={onReload}>
+            {t('conflict.reload')}
           </button>
-          <button type="button" className="secondary-button" aria-label="Download copy" disabled={busy} onClick={onDownload}>
-            Download copy
+          <button type="button" className="secondary-button" aria-label={t('conflict.download')} disabled={busy} onClick={onDownload}>
+            {t('conflict.download')}
           </button>
-          <button type="button" className="danger-button" aria-label="Overwrite" disabled={busy} onClick={onOverwrite}>
-            Overwrite
+          <button type="button" className="danger-button" aria-label={t('conflict.overwrite')} disabled={busy} onClick={onOverwrite}>
+            {t('conflict.overwrite')}
           </button>
         </div>
       </section>
@@ -1186,6 +1408,7 @@ function ConflictDialog({
 function CloseGuardDialog({
   documentName,
   busy,
+  intentKind,
   onCancel,
   onDiscard,
   onSave,
@@ -1193,28 +1416,62 @@ function CloseGuardDialog({
 }: {
   documentName: string
   busy: boolean
+  intentKind: DocumentIntentKind
   onCancel: () => void
   onDiscard: () => void
   onSave: () => void
   returnFocusRef: RefObject<HTMLElement | null>
 }) {
   const dialogRef = useRef<HTMLElement>(null)
+  const { t } = useWorkspaceLocale()
   useModalFocus(dialogRef, returnFocusRef, onCancel)
+  const removing = intentKind === 'remove-workspace'
 
   return (
     <div className="dialog-layer">
       <section ref={dialogRef} className="decision-dialog" role="alertdialog" aria-modal="true" aria-labelledby="close-title" aria-describedby="close-description">
-        <p className="eyebrow">Unsaved draft</p>
-        <h2 id="close-title">Unsaved changes</h2>
-        <p id="close-description">Save {documentName} before closing this pane?</p>
+        <p className="eyebrow">{t('guard.eyebrow')}</p>
+        <h2 id="close-title">{t('guard.title')}</h2>
+        <p id="close-description">
+          {t(removing ? 'guard.removeDescription' : 'guard.closeDescription', {
+            name: documentName,
+          })}
+        </p>
         <div className="dialog-actions">
-          <button type="button" className="secondary-button" autoFocus disabled={busy} onClick={onCancel}>Cancel</button>
-          <button type="button" className="danger-button" disabled={busy} onClick={onDiscard}>Discard pane</button>
-          <button type="button" className="primary-button" disabled={busy} onClick={onSave}>{busy ? 'Saving…' : 'Save'}</button>
+          <button type="button" className="secondary-button" autoFocus disabled={busy} onClick={onCancel}>
+            {t('guard.cancel')}
+          </button>
+          <button type="button" className="danger-button" disabled={busy} onClick={onDiscard}>
+            {t(removing ? 'guard.removeWithoutSaving' : 'guard.discardPane')}
+          </button>
+          <button type="button" className="primary-button" disabled={busy} onClick={onSave}>
+            {busy
+              ? t('guard.saving')
+              : t(removing ? 'guard.saveAndRemove' : 'guard.save')}
+          </button>
         </div>
       </section>
     </div>
   )
+}
+
+function sortWorkspaceDocuments(
+  documents: WorkspaceDocument[],
+  locale: Locale,
+): WorkspaceDocument[] {
+  const collator = new Intl.Collator(locale, { numeric: true })
+  return [...documents].sort((left, right) =>
+    collator.compare(left.virtualPath, right.virtualPath))
+}
+
+function focusDrawerAfterRemoval(documentId?: string) {
+  const row = documentId
+    ? Array.from(document.querySelectorAll<HTMLElement>('[data-file-document-id]'))
+        .find((candidate) => candidate.dataset.fileDocumentId === documentId)
+    : undefined
+  const target = row?.querySelector<HTMLButtonElement>('.file-main-action')
+    ?? document.querySelector<HTMLButtonElement>('[data-drawer-open-files]')
+  target?.focus()
 }
 
 function parentPath(path: string): string {

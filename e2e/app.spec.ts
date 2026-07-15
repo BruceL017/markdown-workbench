@@ -31,13 +31,18 @@ async function useFallbackMode(page: Page) {
   })
 }
 
-async function openFiles(page: Page, files: FilePayload[]) {
+async function openFiles(
+  page: Page,
+  files: FilePayload[],
+  buttonName = 'Open files',
+  drawerName = 'Local files',
+) {
   const chooserPromise = page.waitForEvent('filechooser')
-  await page.getByRole('button', { name: 'Open files' }).first().click()
+  await page.getByRole('button', { name: buttonName }).first().click()
   const chooser = await chooserPromise
   await chooser.setFiles(files)
   if (files.length > 1) {
-    await expect(page.getByRole('dialog', { name: 'Local files' })).toBeVisible()
+    await expect(page.getByRole('dialog', { name: drawerName })).toBeVisible()
   }
 }
 
@@ -124,6 +129,18 @@ test('shows the local-first shell and temporary file drawer', async ({ page }) =
   await expect(page.getByRole('dialog', { name: 'Local files' })).toBeHidden()
 })
 
+test.describe('Chinese browser locale', () => {
+  test.use({ locale: 'zh-CN' })
+
+  test('uses Chinese on the first visit before a preference is saved', async ({ page }) => {
+    await page.goto('/')
+
+    await expect(page.getByRole('main', { name: 'Markdown 工作台' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '打开本地 Markdown' })).toBeVisible()
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+  })
+})
+
 test('fallback flow opens both Markdown extensions, buffers, edits, previews, and downloads', async ({ page }) => {
   await page.goto('/')
   await openFiles(page, [
@@ -160,6 +177,116 @@ test('fallback flow opens both Markdown extensions, buffers, edits, previews, an
   const download = await downloadPromise
   expect(download.suggestedFilename()).toBe('first.md')
   await expect(page.getByText('Download started for first.md.')).toBeVisible()
+})
+
+test('switches the full UI to Chinese, removes a document, and restores both choices', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Chinese' }).click()
+  await expect(page.getByRole('main', { name: 'Markdown 工作台' })).toBeVisible()
+  await expect(page).toHaveTitle('Markdown 工作台')
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN')
+
+  await openFiles(page, [
+    { name: 'first.md', mimeType: 'text/markdown', buffer: Buffer.from('# First') },
+    { name: 'second.md', mimeType: 'text/markdown', buffer: Buffer.from('# Second') },
+  ], '打开文件', '本地文件')
+
+  const notice = page.locator('.notice-region')
+  await expect(notice).toContainText('已打开 2 个 Markdown 文件。')
+  const noticeBox = await notice.boundingBox()
+  expect(noticeBox).not.toBeNull()
+  expect(noticeBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(180)
+  await expect(page.locator('.live-region')).toHaveCount(0)
+
+  const drawer = page.getByRole('dialog', { name: '本地文件' })
+  await drawer.getByRole('button', { name: '将 first.md 移出工作台' }).click()
+  await expect(drawer.getByRole('button', { name: '打开 second.md', exact: true })).toBeFocused()
+  await expect(page.getByText('已将 first.md 移出工作台。')).toBeVisible()
+  await expect(page.getByRole('group', { name: 'second.md 的视图' })).toBeVisible()
+  await expect(drawer.getByRole('button', { name: '将 first.md 移出工作台' })).toHaveCount(0)
+
+  await page.waitForTimeout(850)
+  await page.reload()
+
+  await expect(page.getByRole('main', { name: 'Markdown 工作台' })).toBeVisible()
+  await expect(page.getByRole('group', { name: 'second.md 的视图' })).toBeVisible()
+  await page.getByRole('button', { name: '文件', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: '本地文件' })
+    .getByRole('button', { name: '将 first.md 移出工作台' })).toHaveCount(0)
+
+  await page.getByRole('button', { name: '关闭文件抽屉', exact: true }).click()
+  await page.getByRole('button', { name: '英文' }).click()
+  await expect(page.getByRole('main', { name: 'Markdown Workbench' })).toBeVisible()
+})
+
+test('dirty removal keeps the document on cancel and removes it after fallback save', async ({ page }) => {
+  await page.goto('/')
+  await openFiles(page, [
+    { name: 'draft.md', mimeType: 'text/markdown', buffer: Buffer.from('# Draft') },
+    { name: 'next.md', mimeType: 'text/markdown', buffer: Buffer.from('# Next') },
+  ])
+  await page.getByRole('button', { name: 'Close file drawer', exact: true }).click()
+  await page.getByRole('button', { name: 'Show source for draft.md' }).click()
+  await page.getByRole('textbox', { name: 'Edit draft.md' }).fill('# Unsaved draft')
+
+  const drawer = await openDrawer(page)
+  await drawer.getByRole('button', { name: 'Remove draft.md from workspace' }).click()
+  const guard = page.getByRole('alertdialog', { name: 'Unsaved changes' })
+  await guard.getByRole('button', { name: 'Cancel' }).click()
+  await expect(drawer.getByRole('button', { name: 'Remove draft.md from workspace' })).toBeFocused()
+
+  await drawer.getByRole('button', { name: 'Remove draft.md from workspace' }).click()
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Save and remove' }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toBe('draft.md')
+  await expect(drawer.getByRole('button', { name: 'Remove draft.md from workspace' })).toHaveCount(0)
+  await expect(page.getByRole('group', { name: 'View next.md' })).toBeVisible()
+})
+
+test('mobile drawer keeps removal available while split controls stay hidden', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  await openFiles(page, [
+    { name: 'first.md', mimeType: 'text/markdown', buffer: Buffer.from('# First') },
+    { name: 'second.md', mimeType: 'text/markdown', buffer: Buffer.from('# Second') },
+  ])
+
+  const drawer = page.getByRole('dialog', { name: 'Local files' })
+  await expect(drawer.getByRole('group', { name: 'Split first.md' })).toHaveCount(0)
+  await drawer.getByRole('button', { name: 'Remove first.md from workspace' }).click()
+  await expect(drawer).toBeVisible()
+  await expect(drawer.getByRole('button', { name: 'Open second.md', exact: true })).toBeFocused()
+  await drawer.getByRole('button', { name: 'Close file drawer' }).click()
+  await expect(page.getByRole('article', { name: 'Preview second.md' })).toBeVisible()
+})
+
+test('320px Chinese toolbar keeps stable controls without wrapping or overlap', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 320, height: 700 })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Chinese' }).click()
+
+  const topbar = page.locator('.topbar')
+  const brandIcon = page.locator('.brand-lockup svg')
+  const actions = page.locator('.topbar-actions')
+  const files = page.getByRole('button', { name: '文件', exact: true })
+  await expect(brandIcon).toBeVisible()
+  await expect(page.locator('.files-button-label')).toBeHidden()
+  await expect(files).toBeVisible()
+  expect(await topbar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+
+  const [brandBox, actionsBox, filesBox] = await Promise.all([
+    brandIcon.boundingBox(),
+    actions.boundingBox(),
+    files.boundingBox(),
+  ])
+  expect(brandBox).not.toBeNull()
+  expect(actionsBox).not.toBeNull()
+  expect(filesBox).not.toBeNull()
+  expect((brandBox?.x ?? 0) + (brandBox?.width ?? 0)).toBeLessThanOrEqual(actionsBox?.x ?? 0)
+  expect(filesBox?.width ?? 0).toBeGreaterThanOrEqual(36)
+  expect(filesBox?.height ?? 0).toBeGreaterThanOrEqual(36)
+  await attachScreenshot(page, testInfo, 'toolbar-320-zh-CN')
 })
 
 test('restores fallback drafts, desktop layout, and theme, then clears recovery data', async ({ page }) => {
@@ -421,6 +548,11 @@ test('empty, drawer, multi-pane, and settings states pass axe and attach visual 
   await page.goto('/')
   await expectAxeClean(page, 'empty shell')
   await attachScreenshot(page, testInfo, 'empty-shell')
+
+  await page.getByRole('button', { name: 'Chinese' }).click()
+  await expectAxeClean(page, 'Chinese empty shell')
+  await attachScreenshot(page, testInfo, 'empty-shell-zh-CN')
+  await page.getByRole('button', { name: '英文' }).click()
 
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   await expectAxeClean(page, 'file drawer')

@@ -123,6 +123,7 @@ describe('workspace store', () => {
       activeDocumentId: 'first',
       layoutJson: { global: { splitterSize: 4 } },
       theme: 'dark',
+      locale: 'zh-CN',
     }
 
     store.getState().restoreSnapshot(snapshot)
@@ -132,8 +133,38 @@ describe('workspace store', () => {
       activeDocumentId: 'first',
       layoutJson: snapshot.layoutJson,
       theme: 'dark',
+      locale: 'zh-CN',
     })
     expect(store.getState().toSnapshot()).toEqual(snapshot)
+  })
+
+  it('follows the browser by default and omits a null locale from snapshots', () => {
+    const store = createWorkspaceStore()
+
+    expect(store.getState().locale).toBeNull()
+    expect(store.getState().toSnapshot()).not.toHaveProperty('locale')
+
+    store.getState().setLocale('en')
+    expect(store.getState().locale).toBe('en')
+    expect(store.getState().toSnapshot()).toMatchObject({ locale: 'en' })
+
+    store.getState().setLocale(null)
+    expect(store.getState().toSnapshot()).not.toHaveProperty('locale')
+  })
+
+  it('restores legacy snapshots without a locale as browser-following', () => {
+    const store = createWorkspaceStore()
+    store.getState().setLocale('zh-CN')
+
+    store.getState().restoreSnapshot({
+      schemaVersion: 1,
+      documents: [],
+      activeDocumentId: null,
+      theme: 'system',
+    })
+
+    expect(store.getState().locale).toBeNull()
+    expect(store.getState().toSnapshot()).not.toHaveProperty('locale')
   })
 
   it('removes the active document and selects its next or previous neighbor', () => {
@@ -178,6 +209,7 @@ describe('workspace store', () => {
     store.getState().addDocuments([document('first')])
     store.getState().setLayoutJson({ layout: 'saved' })
     store.getState().setTheme('dark')
+    store.getState().setLocale('zh-CN')
 
     expect(store.getState().toSnapshot().theme).toBe('dark')
 
@@ -189,6 +221,7 @@ describe('workspace store', () => {
       activeDocumentId: null,
       layoutJson: undefined,
       theme: 'system',
+      locale: null,
     })
   })
 })

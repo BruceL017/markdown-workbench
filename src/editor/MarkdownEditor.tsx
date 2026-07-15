@@ -6,6 +6,8 @@ import { EditorView, keymap } from '@codemirror/view'
 import { tags } from '@lezer/highlight'
 import { useLayoutEffect, useRef } from 'react'
 
+import { codeMirrorPhrases, useWorkspaceLocale } from '../i18n/workspaceLocale'
+
 export interface MarkdownEditorProps {
   value: string
   onChange: (value: string) => void
@@ -105,22 +107,27 @@ export function MarkdownEditor({
   ariaLabel,
   onSave,
 }: MarkdownEditorProps) {
+  const { locale } = useWorkspaceLocale()
   const parentRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView>(null)
   const onChangeRef = useRef(onChange)
   const onSaveRef = useRef(onSave)
   const ariaLabelRef = useRef(ariaLabel)
+  const localeRef = useRef(locale)
+  const phrasesCompartmentRef = useRef(new Compartment())
   const replaceValueRef = useRef<(nextValue: string) => void>(() => undefined)
 
   onChangeRef.current = onChange
   onSaveRef.current = onSave
   ariaLabelRef.current = ariaLabel
+  localeRef.current = locale
 
   useLayoutEffect(() => {
     const parent = parentRef.current
     if (!parent) return
 
     const themeCompartment = new Compartment()
+    const phrasesCompartment = phrasesCompartmentRef.current
     const mediaQuery = typeof window.matchMedia === 'function'
       ? window.matchMedia('(prefers-color-scheme: dark)')
       : undefined
@@ -134,6 +141,9 @@ export function MarkdownEditor({
           markdown(),
           syntaxHighlighting(markdownHighlightStyle),
           themeCompartment.of(createEditorTheme(dark)),
+          phrasesCompartment.of(
+            EditorState.phrases.of(codeMirrorPhrases(localeRef.current)),
+          ),
           EditorView.contentAttributes.of({
             'aria-label': ariaLabelRef.current,
             'aria-multiline': 'true',
@@ -199,6 +209,14 @@ export function MarkdownEditor({
   useLayoutEffect(() => {
     viewRef.current?.contentDOM.setAttribute('aria-label', ariaLabel)
   }, [ariaLabel])
+
+  useLayoutEffect(() => {
+    viewRef.current?.dispatch({
+      effects: phrasesCompartmentRef.current.reconfigure(
+        EditorState.phrases.of(codeMirrorPhrases(locale)),
+      ),
+    })
+  }, [locale])
 
   return <div className="markdown-editor" ref={parentRef} />
 }

@@ -30,6 +30,7 @@ export interface WorkspaceSession {
   start(): void
   flush(): Promise<void>
   persistHandles(documents: WorkspaceDocument[]): Promise<void>
+  forgetDocument(document: WorkspaceDocument): Promise<void>
   clear(): Promise<void>
   dispose(): void
 }
@@ -144,6 +145,14 @@ export function createWorkspaceSession(
       }
     },
 
+    async forgetDocument(document) {
+      await persister?.flush()
+      if (document.handleKey) {
+        await persistence?.deleteHandle(document.handleKey)
+        runtime.nativeHandleRegistry.delete(document.handleKey)
+      }
+    },
+
     async clear() {
       unsubscribe?.()
       unsubscribe = undefined
@@ -191,6 +200,9 @@ function validateSnapshot(value: unknown): WorkspaceSnapshot | null {
     candidate.theme !== 'light' &&
     candidate.theme !== 'dark'
   ) {
+    return null
+  }
+  if (candidate.locale !== undefined && candidate.locale !== 'zh-CN' && candidate.locale !== 'en') {
     return null
   }
   return candidate as WorkspaceSnapshot

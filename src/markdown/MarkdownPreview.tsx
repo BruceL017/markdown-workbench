@@ -11,6 +11,7 @@ import remarkGfm from 'remark-gfm'
 
 import type { AssetRegistry } from '../files/assetRegistry'
 import { resolveResourceTarget } from '../files/virtualPath'
+import { useWorkspaceLocale } from '../i18n/workspaceLocale'
 
 export interface MarkdownPreviewProps {
   markdown: string
@@ -117,23 +118,24 @@ function imageTarget(currentDocumentPath: string, rawSource: string): ImageTarge
 }
 
 function ImagePlaceholder({ alt, loading }: { alt: string; loading?: boolean }) {
-  const name = alt || 'Image'
+  const { t } = useWorkspaceLocale()
+  const name = alt || t('image.defaultName')
 
   return loading ? (
     <span
       className="markdown-image-placeholder"
       role="status"
-      aria-label={`Loading ${name} image`}
+      aria-label={t('image.loadingLabel', { name })}
     >
-      Loading image…
+      {t('image.loading')}
     </span>
   ) : (
     <span
       className="markdown-image-placeholder"
       role="img"
-      aria-label={`${name} image unavailable`}
+      aria-label={t('image.unavailableLabel', { name })}
     >
-      {name} image unavailable
+      {t('image.unavailable', { name })}
     </span>
   )
 }
@@ -309,9 +311,11 @@ export function MarkdownPreview({
   markdown,
   currentDocumentPath,
   assetRegistry,
-  ariaLabel = 'Markdown preview',
+  ariaLabel,
   onOpenDocument,
 }: MarkdownPreviewProps) {
+  const { t } = useWorkspaceLocale()
+  const resolvedAriaLabel = ariaLabel ?? t('preview.defaultLabel')
   const components = useMemo<Components>(
     () => ({
       img: ({ node: _node, src, alt, title, width, height }) => (
@@ -351,7 +355,7 @@ export function MarkdownPreview({
   )
 
   return (
-    <article className="markdown-body" aria-label={ariaLabel}>
+    <article className="markdown-body" aria-label={resolvedAriaLabel}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[

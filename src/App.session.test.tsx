@@ -138,6 +138,29 @@ describe('App session lifecycle', () => {
     expect(document.documentElement.dataset.theme).toBe('dark')
   })
 
+  it('restores and persists the interface language without changing the schema version', async () => {
+    const user = userEvent.setup()
+    const saveWorkspace = vi.fn(async () => undefined)
+    const workbench = runtime({
+      persistence: persistence({
+        loadWorkspace: vi.fn(async () => snapshot({ locale: 'zh-CN' })),
+        saveWorkspace,
+      }),
+    })
+    render(<App runtime={workbench} />)
+
+    await screen.findByRole('textbox', { name: '编辑 restored.md' })
+    expect(screen.getByRole('main', { name: 'Markdown 工作台' })).toBeInTheDocument()
+    expect(workbench.store.getState().locale).toBe('zh-CN')
+
+    await user.click(screen.getByRole('button', { name: '英文' }))
+
+    expect(workbench.store.getState().locale).toBe('en')
+    await waitFor(() => expect(saveWorkspace).toHaveBeenCalledWith(
+      expect.objectContaining({ schemaVersion: 1, locale: 'en' }),
+    ), { timeout: 1_500 })
+  })
+
   it('persists accepted native handles and requests permission only from Save', async () => {
     const user = userEvent.setup()
     const handle = {

@@ -124,6 +124,7 @@ function storedWorkspace(snapshot: WorkspaceSnapshot): StoredWorkspace {
     activeDocumentId: snapshot.activeDocumentId,
     ...(snapshot.layoutJson === undefined ? {} : { layoutJson: snapshot.layoutJson }),
     ...(snapshot.theme === undefined ? {} : { theme: snapshot.theme }),
+    ...(snapshot.locale === undefined ? {} : { locale: snapshot.locale }),
   }
 }
 

@@ -36,6 +36,7 @@ function snapshot(overrides: Partial<WorkspaceSnapshot> = {}): WorkspaceSnapshot
     activeDocumentId: 'document-a',
     layoutJson: { orientation: 'horizontal' },
     theme: 'dark',
+    locale: 'zh-CN',
     ...overrides,
   }
 }
@@ -82,6 +83,7 @@ describe('createWorkspacePersistence', () => {
       activeDocumentId: 'document-a',
       layoutJson: { orientation: 'horizontal' },
       theme: 'dark',
+      locale: 'zh-CN',
     })
     expect(storedWorkspace).not.toHaveProperty('documents')
     expect(storedDocuments).toEqual(current.documents.map((item, order) => ({ ...item, order })))
@@ -105,6 +107,7 @@ describe('createWorkspacePersistence', () => {
       activeDocumentId: 'latest',
       layoutJson: undefined,
       theme: 'light',
+      locale: 'en',
     })
 
     await persistence.saveWorkspace(first)

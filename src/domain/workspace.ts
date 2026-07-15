@@ -2,6 +2,8 @@ export type ViewMode = 'source' | 'preview'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
 
+export type Locale = 'zh-CN' | 'en'
+
 export type DocumentSourceKind = 'native' | 'fallback' | 'cache'
 
 export interface DiskFingerprint {
@@ -29,4 +31,5 @@ export interface WorkspaceSnapshot {
   activeDocumentId: string | null
   layoutJson?: unknown
   theme?: ThemePreference
+  locale?: Locale
 }

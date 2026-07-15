@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
+import { WorkspaceLocaleProvider } from '../i18n/workspaceLocale'
 import { MarkdownEditor } from './MarkdownEditor'
 
 function editorView() {
@@ -151,6 +152,40 @@ describe('MarkdownEditor', () => {
 
     unmount()
     delete document.documentElement.dataset.theme
+  })
+
+  it('reconfigures CodeMirror phrases without replacing the editor state', () => {
+    const onChange = vi.fn()
+    const localizedEditor = (locale: 'en' | 'zh-CN') => (
+      <WorkspaceLocaleProvider locale={locale}>
+        <MarkdownEditor
+          value="draft"
+          onChange={onChange}
+          ariaLabel="Markdown source"
+        />
+      </WorkspaceLocaleProvider>
+    )
+    const { rerender } = render(localizedEditor('en'))
+    const view = editorView()
+    view.dispatch({ changes: { from: view.state.doc.length, insert: ' edit' } })
+    view.focus()
+
+    expect(undoDepth(view.state)).toBe(1)
+    expect(view.hasFocus).toBe(true)
+
+    rerender(localizedEditor('zh-CN'))
+
+    expect(editorView()).toBe(view)
+    expect(view.state.doc.toString()).toBe('draft edit')
+    expect(view.hasFocus).toBe(true)
+    expect(undoDepth(view.state)).toBe(1)
+
+    fireEvent.keyDown(view.contentDOM, { key: 'f', ctrlKey: true })
+    expect(screen.getByRole('textbox', { name: '查找' })).toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: '替换' })).toBeInTheDocument()
+
+    expect(undo(view)).toBe(true)
+    expect(view.state.doc.toString()).toBe('draft')
   })
 
   it('destroys the EditorView when the component unmounts', () => {

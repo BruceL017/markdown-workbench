@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Model } from 'flexlayout-react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { App } from './App'
 import type { WorkspaceDocument } from './domain/workspace'
@@ -88,6 +88,8 @@ function visibleIds(workbench: WorkbenchRuntime) {
   if (!json) return []
   return visibleDocumentIds(Model.fromJson(json as Parameters<typeof Model.fromJson>[0]))
 }
+
+afterEach(() => vi.useRealTimers())
 
 describe('App', () => {
   it('renders a local-first empty state and a temporary file drawer', async () => {
@@ -578,5 +580,264 @@ describe('App', () => {
     await user.click(screen.getByRole('button', { name: 'Files' }))
     await user.click(screen.getByRole('button', { name: 'Open first.md' }))
     expect(visibleIds(workbench)).toEqual(['first'])
+  })
+
+  it('switches the complete workbench between Chinese and English', async () => {
+    const user = userEvent.setup()
+    const workbench = runtime()
+    render(<App runtime={workbench} />)
+
+    await user.click(screen.getByRole('button', { name: 'Chinese' }))
+
+    expect(workbench.store.getState().locale).toBe('zh-CN')
+    expect(screen.getByRole('main', { name: 'Markdown 工作台' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: '打开本地 Markdown' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '文件' })).toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: '主题' })).toBeInTheDocument()
+    expect(globalThis.document.documentElement.lang).toBe('zh-CN')
+    expect(globalThis.document.title).toBe('Markdown 工作台')
+
+    await user.click(screen.getByRole('button', { name: '英文' }))
+
+    expect(workbench.store.getState().locale).toBe('en')
+    expect(screen.getByRole('main', { name: 'Markdown Workbench' })).toBeInTheDocument()
+    expect(globalThis.document.documentElement.lang).toBe('en')
+    expect(globalThis.document.title).toBe('Markdown Workbench')
+  })
+
+  it('shows operation feedback at the top and removes it after three seconds', async () => {
+    vi.useFakeTimers()
+    const fallback = adapter({
+      openFiles: vi.fn(async () => openResult([document('notice')])),
+    })
+    const view = render(<App runtime={runtime({ fallback })} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open files' }))
+    await act(async () => Promise.resolve())
+
+    expect(screen.getByRole('status')).toHaveTextContent('Opened notice.md.')
+    expect(view.container.querySelector('.notice-region')).toBeInTheDocument()
+    expect(view.container.querySelector('.live-region')).not.toBeInTheDocument()
+
+    await act(async () => vi.advanceTimersByTime(3_000))
+    expect(screen.queryByText('Opened notice.md.')).not.toBeInTheDocument()
+  })
+
+  it('removes a visible document and opens its visual neighbor in the same workspace', async () => {
+    const user = userEvent.setup()
+    const workbench = runtime({
+      documents: [document('first'), document('second'), document('third')],
+    })
+    render(<App runtime={workbench} />)
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+
+    await user.click(screen.getByRole('button', { name: 'Remove first.md from workspace' }))
+
+    expect(workbench.store.getState().documentOrder).toEqual(['second', 'third'])
+    expect(visibleIds(workbench)).toEqual(['second'])
+    expect(screen.getByRole('dialog', { name: 'Local files' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Open second.md' })).toHaveFocus())
+    expect(screen.getByRole('status')).toHaveTextContent('Removed first.md from the workspace.')
+  })
+
+  it('removes a hidden document without changing the visible pane', async () => {
+    const user = userEvent.setup()
+    const workbench = runtime({ documents: [document('first'), document('second')] })
+    const clearAssets = vi.spyOn(workbench.assetRegistry, 'clear')
+    render(<App runtime={workbench} />)
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+
+    await user.click(screen.getByRole('button', { name: 'Remove second.md from workspace' }))
+
+    expect(workbench.store.getState().documentOrder).toEqual(['first'])
+    expect(visibleIds(workbench)).toEqual(['first'])
+    expect(clearAssets).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Show preview for first.md' }))
+      .toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('focuses an already visible neighbor without duplicating it', async () => {
+    const user = userEvent.setup()
+    const workbench = runtime({ documents: [document('first'), document('second')] })
+    render(<App runtime={workbench} />)
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    await user.click(screen.getByRole('button', { name: 'Open second.md in right split' }))
+    expect(visibleIds(workbench)).toEqual(['first', 'second'])
+
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    await user.click(screen.getByRole('button', { name: 'Remove first.md from workspace' }))
+
+    expect(workbench.store.getState().documentOrder).toEqual(['second'])
+    expect(visibleIds(workbench)).toEqual(['second'])
+    expect(new Set(visibleIds(workbench)).size).toBe(1)
+  })
+
+  it('focuses Open files after removing the last workspace document', async () => {
+    const user = userEvent.setup()
+    const workbench = runtime({ documents: [document('only')] })
+    const clearAssets = vi.spyOn(workbench.assetRegistry, 'clear')
+    render(<App runtime={workbench} />)
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    const drawer = screen.getByRole('dialog', { name: 'Local files' })
+
+    await user.click(screen.getByRole('button', { name: 'Remove only.md from workspace' }))
+
+    expect(workbench.store.getState().documentOrder).toEqual([])
+    expect(visibleIds(workbench)).toEqual([])
+    expect(clearAssets).toHaveBeenCalledOnce()
+    await waitFor(() => expect(within(drawer).getByRole('button', { name: 'Open files' })).toHaveFocus())
+    expect(screen.getByText('No Markdown files open.')).toBeInTheDocument()
+  })
+
+  it('disables removal while a new file set is still being registered', async () => {
+    const user = userEvent.setup()
+    let finishOpen!: (result: OpenResult) => void
+    const fallback = adapter({
+      openDirectory: vi.fn(() => new Promise<OpenResult>((resolve) => {
+        finishOpen = resolve
+      })),
+    })
+    const workbench = runtime({ documents: [document('first')], fallback })
+    render(<App runtime={workbench} />)
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    await user.click(screen.getByRole('button', { name: 'Open folder' }))
+
+    expect(screen.getByRole('button', { name: 'Remove first.md from workspace' })).toBeDisabled()
+
+    await act(async () => finishOpen(openResult([])))
+    await waitFor(() => expect(
+      screen.getByRole('button', { name: 'Remove first.md from workspace' }),
+    ).toBeEnabled())
+  })
+
+  it('guards dirty removal and returns focus on cancel before discarding the document', async () => {
+    const user = userEvent.setup()
+    const workbench = runtime({
+      documents: [
+        document('first', { text: '# draft', dirty: true }),
+        document('second'),
+      ],
+    })
+    render(<App runtime={workbench} />)
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    const remove = screen.getByRole('button', { name: 'Remove first.md from workspace' })
+
+    await user.click(remove)
+    const dialog = screen.getByRole('alertdialog', { name: 'Unsaved changes' })
+    expect(dialog).toHaveTextContent('before removing it from this workspace')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+
+    await waitFor(() => expect(remove).toHaveFocus())
+    expect(workbench.store.getState().documents.first).toBeDefined()
+
+    await user.click(remove)
+    await user.click(screen.getByRole('button', { name: 'Remove without saving' }))
+
+    expect(workbench.store.getState().documents.first).toBeUndefined()
+    expect(visibleIds(workbench)).toEqual(['second'])
+  })
+
+  it('continues dirty removal after every successful conflict resolution', async () => {
+    const user = userEvent.setup()
+    const conflict: SaveResult = {
+      status: 'conflict',
+      diskText: '# disk',
+      fingerprint: { lastModified: 60, size: 6 },
+    }
+
+    for (const resolution of ['Reload disk version', 'Download copy', 'Overwrite'] as const) {
+      const id = `remove-${resolution.split(' ')[0].toLowerCase()}`
+      const nativeSave = resolution === 'Overwrite'
+        ? vi.fn<FileAdapter['save']>()
+            .mockResolvedValueOnce(conflict)
+            .mockResolvedValueOnce({
+              status: 'written',
+              fingerprint: { lastModified: 61, size: 7 },
+            })
+        : vi.fn<FileAdapter['save']>().mockResolvedValue(conflict)
+      const fallback = adapter({
+        save: vi.fn<FileAdapter['save']>().mockResolvedValue({
+          status: 'downloaded',
+          filename: `${id}.md`,
+        }),
+      })
+      const workbench = runtime({
+        documents: [document(id, { sourceKind: 'native', text: '# draft', dirty: true })],
+        native: adapter({ save: nativeSave }),
+        fallback,
+      })
+      const view = render(<App runtime={workbench} />)
+      await user.click(screen.getByRole('button', { name: 'Files' }))
+      await user.click(screen.getByRole('button', { name: `Remove ${id}.md from workspace` }))
+      await user.click(screen.getByRole('button', { name: 'Save and remove' }))
+      await user.click(screen.getByRole('button', { name: resolution }))
+
+      await waitFor(() => expect(workbench.store.getState().documents[id]).toBeUndefined())
+      expect(visibleIds(workbench)).toEqual([])
+      view.unmount()
+    }
+  })
+
+  it('clears a pending removal when the document changes during a successful save', async () => {
+    const user = userEvent.setup()
+    let finishFirstSave!: (result: SaveResult) => void
+    const save = vi.fn<FileAdapter['save']>()
+      .mockImplementationOnce(() => new Promise<SaveResult>((resolve) => {
+        finishFirstSave = resolve
+      }))
+      .mockResolvedValueOnce({
+        status: 'conflict',
+        diskText: '# disk after later save',
+        fingerprint: { lastModified: 70, size: 23 },
+      })
+    const workbench = runtime({
+      documents: [document('first', { text: '# first draft', dirty: true })],
+      fallback: adapter({ save }),
+    })
+    render(<App runtime={workbench} />)
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    await user.click(screen.getByRole('button', { name: 'Remove first.md from workspace' }))
+    await user.click(screen.getByRole('button', { name: 'Save and remove' }))
+
+    act(() => workbench.store.getState().updateDocumentText('first', '# edited again'))
+    await act(async () => finishFirstSave({ status: 'downloaded', filename: 'first.md' }))
+
+    await waitFor(() => expect(workbench.store.getState().documents.first).toMatchObject({
+      text: '# edited again',
+      dirty: true,
+    }))
+    await user.click(screen.getByRole('button', { name: 'Close file drawer' }))
+    await user.click(screen.getByRole('button', { name: 'Save first.md' }))
+    await user.click(screen.getByRole('button', { name: 'Reload disk version' }))
+
+    expect(workbench.store.getState().documents.first).toBeDefined()
+    expect(visibleIds(workbench)).toEqual(['first'])
+  })
+
+  it('keeps the drawer and focus trap intact when Escape is pressed during a remove conflict', async () => {
+    const user = userEvent.setup()
+    const workbench = runtime({
+      documents: [document('first', { text: '# draft', dirty: true })],
+      fallback: adapter({
+        save: vi.fn<FileAdapter['save']>(async () => ({
+          status: 'conflict',
+          diskText: '# disk',
+          fingerprint: { lastModified: 80, size: 6 },
+        })),
+      }),
+    })
+    render(<App runtime={workbench} />)
+    await user.click(screen.getByRole('button', { name: 'Files' }))
+    await user.click(screen.getByRole('button', { name: 'Remove first.md from workspace' }))
+    await user.click(screen.getByRole('button', { name: 'Save and remove' }))
+    const conflict = screen.getByRole('alertdialog', { name: 'first.md changed on disk' })
+    const reload = within(conflict).getByRole('button', { name: 'Reload disk version' })
+    expect(reload).toHaveFocus()
+
+    await user.keyboard('{Escape}')
+
+    expect(conflict).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: 'Local files' })).toBeInTheDocument()
+    expect(reload).toHaveFocus()
   })
 })

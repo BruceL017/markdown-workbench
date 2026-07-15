@@ -2,6 +2,7 @@ import { createStore } from 'zustand/vanilla'
 
 import type {
   DiskFingerprint,
+  Locale,
   ThemePreference,
   ViewMode,
   WorkspaceDocument,
@@ -20,6 +21,7 @@ export interface WorkspaceState {
   activeDocumentId: string | null
   layoutJson?: unknown
   theme: ThemePreference
+  locale: Locale | null
 }
 
 export interface WorkspaceActions {
@@ -30,6 +32,7 @@ export interface WorkspaceActions {
   markDocumentSaved: (id: string, options?: MarkDocumentSavedOptions) => void
   setLayoutJson: (layoutJson: unknown) => void
   setTheme: (theme: ThemePreference) => void
+  setLocale: (locale: Locale | null) => void
   removeDocument: (id: string) => void
   resetWorkspace: () => void
   restoreSnapshot: (snapshot: WorkspaceSnapshot) => void
@@ -47,6 +50,7 @@ export function createWorkspaceStore() {
     documentOrder: [],
     activeDocumentId: null,
     theme: 'system',
+    locale: null,
 
     addDocuments: (incomingDocuments) => {
       set((state) => {
@@ -136,6 +140,10 @@ export function createWorkspaceStore() {
       set({ theme })
     },
 
+    setLocale: (locale) => {
+      set({ locale })
+    },
+
     removeDocument: (id) => {
       set((state) => {
         if (!hasOwn(state.documents, id)) return state
@@ -162,6 +170,7 @@ export function createWorkspaceStore() {
         activeDocumentId: null,
         layoutJson: undefined,
         theme: 'system',
+        locale: null,
       })
     },
 
@@ -184,6 +193,7 @@ export function createWorkspaceStore() {
             : null,
         layoutJson: snapshot.layoutJson,
         theme: snapshot.theme ?? 'system',
+        locale: snapshot.locale ?? null,
       })
     },
 
@@ -195,6 +205,7 @@ export function createWorkspaceStore() {
         activeDocumentId: state.activeDocumentId,
         ...(state.layoutJson === undefined ? {} : { layoutJson: state.layoutJson }),
         theme: state.theme,
+        ...(state.locale === null ? {} : { locale: state.locale }),
       }
     },
   }))

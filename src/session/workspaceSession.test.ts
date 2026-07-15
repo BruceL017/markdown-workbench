@@ -29,6 +29,7 @@ function snapshot(overrides: Partial<WorkspaceSnapshot> = {}): WorkspaceSnapshot
     documents: [document('first')],
     activeDocumentId: 'first',
     theme: 'dark',
+    locale: 'zh-CN',
     ...overrides,
   }
 }
@@ -84,6 +85,7 @@ describe('workspace session', () => {
 
     expect(runtime.store.getState().documents.first).toEqual(restored.documents[0])
     expect(runtime.store.getState().theme).toBe('dark')
+    expect(runtime.store.getState().locale).toBe('zh-CN')
     expect(activeDocumentId(result.model)).toBe('first')
     expect(runtime.nativeHandleRegistry.get('handle:first')).toBe(handle)
     expect(handle.requestPermission).not.toHaveBeenCalled()
@@ -92,6 +94,7 @@ describe('workspace session', () => {
   it('ignores stale and corrupt snapshots without overwriting current state', async () => {
     for (const loaded of [
       { ...snapshot(), schemaVersion: 2 },
+      { ...snapshot(), locale: 'fr' },
       { schemaVersion: 1, documents: [{ id: 'broken' }], activeDocumentId: 'broken' },
     ]) {
       const workspacePersistence = persistence({
@@ -137,6 +140,51 @@ describe('workspace session', () => {
         documents: [expect.objectContaining({ id: 'first', text: '# latest' })],
       }),
     )
+  })
+
+  it('flushes a removed document before deleting its saved handle', async () => {
+    const saveWorkspace = vi.fn(async () => undefined)
+    const deleteHandle = vi.fn(async () => undefined)
+    const workspacePersistence = persistence({ saveWorkspace, deleteHandle })
+    const { runtime } = setup(workspacePersistence)
+    const session = createWorkspaceSession(runtime, {
+      requestPersistentStorage: vi.fn(async () => true),
+    })
+    const removed = document('native', {
+      sourceKind: 'native',
+      handleKey: 'handle:native',
+    })
+    const handle = { kind: 'file', name: 'native.md' } as FileSystemFileHandle
+    runtime.nativeHandleRegistry.set('handle:native', handle)
+    await session.hydrate()
+    session.start()
+    runtime.store.getState().addDocuments([removed])
+    runtime.store.getState().removeDocument(removed.id)
+
+    await session.forgetDocument(removed)
+
+    expect(saveWorkspace).toHaveBeenLastCalledWith(expect.objectContaining({ documents: [] }))
+    expect(deleteHandle).toHaveBeenCalledWith('handle:native')
+    expect(runtime.nativeHandleRegistry.get('handle:native')).toBeUndefined()
+  })
+
+  it('leaves asset lifecycle to the synchronous workspace removal flow', async () => {
+    const { runtime, revoked } = setup()
+    const session = createWorkspaceSession(runtime, {
+      requestPersistentStorage: vi.fn(async () => true),
+    })
+    const removed = document('removed')
+    runtime.assetRegistry.register('images/shared.png', new File(['asset'], 'shared.png'))
+    await runtime.assetRegistry.resolve('images/shared.png')
+    await session.hydrate()
+    session.start()
+    runtime.store.getState().addDocuments([removed])
+    runtime.store.getState().removeDocument(removed.id)
+
+    await session.forgetDocument(removed)
+
+    expect(revoked).toEqual([])
+    expect(await runtime.assetRegistry.resolve('images/shared.png')).toBe('blob:asset')
   })
 
   it('stores only accepted native handles supplied after dedupe', async () => {

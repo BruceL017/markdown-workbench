@@ -3,6 +3,7 @@ import { describe, expectTypeOf, it } from 'vitest'
 import type {
   DiskFingerprint,
   DocumentSourceKind,
+  Locale,
   ViewMode,
   WorkspaceDocument,
   WorkspaceSnapshot,
@@ -11,6 +12,7 @@ import type {
 describe('workspace domain types', () => {
   it('exposes the persisted workspace contract', () => {
     expectTypeOf<ViewMode>().toEqualTypeOf<'source' | 'preview'>()
+    expectTypeOf<Locale>().toEqualTypeOf<'zh-CN' | 'en'>()
     expectTypeOf<DocumentSourceKind>().toEqualTypeOf<'native' | 'fallback' | 'cache'>()
     expectTypeOf<DiskFingerprint>().toEqualTypeOf<{
       lastModified: number
@@ -37,6 +39,7 @@ describe('workspace domain types', () => {
       activeDocumentId: string | null
       layoutJson?: unknown
       theme?: 'system' | 'light' | 'dark'
+      locale?: Locale
     }>()
   })
 })

@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AssetRegistry } from '../files/assetRegistry'
+import { WorkspaceLocaleProvider } from '../i18n/workspaceLocale'
 import { MarkdownPreview } from './MarkdownPreview'
 
 function createRegistry() {
@@ -227,6 +228,75 @@ describe('MarkdownPreview', () => {
       'src',
       'blob:asset-1',
     )
+  })
+
+  it('localizes its default label and image placeholders from context', async () => {
+    const { registry } = createRegistry()
+    let finishLoading!: (file: File) => void
+    registry.register(
+      'docs/assets/slow.png',
+      () =>
+        new Promise<File>((resolve) => {
+          finishLoading = resolve
+        }),
+    )
+
+    render(
+      <WorkspaceLocaleProvider locale="zh-CN">
+        <MarkdownPreview
+          markdown={['![图表](assets/slow.png)', '![](../../outside.png)'].join('\n\n')}
+          currentDocumentPath="docs/readme.md"
+          assetRegistry={registry}
+        />
+      </WorkspaceLocaleProvider>,
+    )
+
+    expect(screen.getByRole('article', { name: 'Markdown 预览' })).toBeInTheDocument()
+    expect(screen.getByRole('status', { name: '正在载入图片 图表' })).toHaveTextContent(
+      '正在载入图片…',
+    )
+    expect(screen.getByRole('img', { name: '图片 图片 不可用' })).toHaveTextContent(
+      '图片 图片 不可用',
+    )
+
+    finishLoading(new File(['slow'], 'slow.png'))
+    expect(await screen.findByRole('img', { name: '图表' })).toHaveAttribute(
+      'src',
+      'blob:asset-1',
+    )
+  })
+
+  it('keeps explicit preview labels ahead of the localized default', () => {
+    const { registry } = createRegistry()
+
+    render(
+      <WorkspaceLocaleProvider locale="zh-CN">
+        <MarkdownPreview
+          markdown="Document"
+          currentDocumentPath="docs/readme.md"
+          assetRegistry={registry}
+          ariaLabel="Custom preview label"
+        />
+      </WorkspaceLocaleProvider>,
+    )
+
+    expect(screen.getByRole('article', { name: 'Custom preview label' })).toBeInTheDocument()
+    expect(screen.queryByRole('article', { name: 'Markdown 预览' })).not.toBeInTheDocument()
+  })
+
+  it('uses English preview defaults without a locale provider', () => {
+    const { registry } = createRegistry()
+
+    render(
+      <MarkdownPreview
+        markdown="![](../../outside.png)"
+        currentDocumentPath="docs/readme.md"
+        assetRegistry={registry}
+      />,
+    )
+
+    expect(screen.getByRole('article', { name: 'Markdown preview' })).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Image image unavailable' })).toBeInTheDocument()
   })
 
   it('keeps anchors local, opens web links safely, and routes workspace Markdown links', () => {

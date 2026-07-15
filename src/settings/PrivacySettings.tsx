@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from 'react'
 
+import { useWorkspaceLocale } from '../i18n/workspaceLocale'
 import { useModalFocus } from '../workbench/useModalFocus'
 
 export function SettingsDialog({
@@ -14,6 +15,7 @@ export function SettingsDialog({
   returnFocusRef: RefObject<HTMLElement | null>
 }) {
   const dialogRef = useRef<HTMLElement>(null)
+  const { t } = useWorkspaceLocale()
   useModalFocus(dialogRef, returnFocusRef, onClose)
 
   return (
@@ -25,30 +27,30 @@ export function SettingsDialog({
         aria-modal="true"
         aria-labelledby="settings-title"
       >
-        <p className="eyebrow">Local-first</p>
-        <h2 id="settings-title">Privacy and local data</h2>
+        <p className="eyebrow">{t('settings.eyebrow')}</p>
+        <h2 id="settings-title">{t('settings.title')}</h2>
         <ul className="privacy-list">
           <li>
             {directSave
-              ? 'This browser can write back only to local files you approve.'
-              : 'Compatibility mode saves edits by downloading a copy.'}
+              ? t('settings.directSave')
+              : t('settings.downloadSave')}
           </li>
-          <li>No document upload or telemetry is used.</li>
-          <li>Remote images in previews may contact their third-party hosts.</li>
-          <li>IndexedDB drafts help with recovery; they are not a backup.</li>
+          <li>{t('settings.noUpload')}</li>
+          <li>{t('settings.remoteImages')}</li>
+          <li>{t('settings.drafts')}</li>
         </ul>
         <div className="settings-clear-row">
           <div>
-            <strong>Browser recovery data</strong>
-            <span>Remove drafts, layout, preferences, and saved file permissions.</span>
+            <strong>{t('settings.recoveryTitle')}</strong>
+            <span>{t('settings.recoveryDescription')}</span>
           </div>
           <button type="button" className="danger-button" onClick={onClear}>
-            Clear local data
+            {t('settings.clear')}
           </button>
         </div>
         <div className="dialog-actions">
           <button type="button" className="primary-button" autoFocus onClick={onClose}>
-            Done
+            {t('settings.done')}
           </button>
         </div>
       </section>
@@ -71,6 +73,7 @@ export function ClearLocalDataDialog({
 }) {
   const dialogRef = useRef<HTMLElement>(null)
   const cancelRef = useRef<HTMLButtonElement>(null)
+  const { t } = useWorkspaceLocale()
   useModalFocus(dialogRef, returnFocusRef, busy ? undefined : onCancel)
   useEffect(() => {
     if (busy) cancelRef.current?.focus()
@@ -86,12 +89,12 @@ export function ClearLocalDataDialog({
         aria-labelledby="clear-title"
         aria-describedby="clear-description"
       >
-        <p className="eyebrow">Browser storage</p>
-        <h2 id="clear-title">Clear local data?</h2>
+        <p className="eyebrow">{t('clear.eyebrow')}</p>
+        <h2 id="clear-title">{t('clear.title')}</h2>
         <p id="clear-description">
           {dirty
-            ? 'This removes recovery drafts, including unsaved changes, plus the saved layout and file permissions.'
-            : 'This removes recovery drafts, the saved layout, preferences, and file permissions.'}
+            ? t('clear.dirtyDescription')
+            : t('clear.description')}
         </p>
         <div className="dialog-actions">
           <button
@@ -104,10 +107,10 @@ export function ClearLocalDataDialog({
               if (!busy) onCancel()
             }}
           >
-            Cancel
+            {t('clear.cancel')}
           </button>
           <button type="button" className="danger-button" disabled={busy} onClick={onClear}>
-            {busy ? 'Clearing…' : 'Clear'}
+            {busy ? t('clear.clearing') : t('clear.action')}
           </button>
         </div>
       </section>
