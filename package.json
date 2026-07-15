@@ -1,7 +1,24 @@
 {
   "name": "markdown-workbench",
-  "private": true,
   "version": "0.1.0",
+  "description": "A local-first Markdown editor and multi-document workbench that runs entirely in the browser.",
+  "keywords": [
+    "markdown",
+    "markdown-editor",
+    "local-first",
+    "react",
+    "codemirror"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BruceL017/markdown-workbench.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BruceL017/markdown-workbench/issues"
+  },
+  "homepage": "https://brucel017.github.io/markdown-workbench/",
+  "private": true,
   "type": "module",
   "engines": {
     "node": "^20.19.0 || ^22.13.0 || >=24.0.0"
@@ -9,6 +26,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
