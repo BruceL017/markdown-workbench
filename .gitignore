@@ -1,1 +1,29 @@
+# Secrets and machine-local configuration
+.env
+.env.*
+!.env.example
+!.env.sample
+.npmrc
+.netrc
+credentials*.json
+service-account*.json
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Local tooling and operating system files
+.DS_Store
+.idea/
+.vscode/
+.codex/
+.claude/
 .worktrees/
+*.log
+
+# Generated dependencies and output
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
