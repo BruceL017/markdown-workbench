@@ -149,12 +149,6 @@ npm run test:e2e
 - 渐进增强：浏览器能力不同，但核心阅读和编辑流程保持可用
 - 安全保存：权限、冲突、未保存状态和恢复结果始终可见
 
-## GitHub Pages
-
-仓库包含手动触发的 [Deploy to GitHub Pages](.github/workflows/deploy-pages.yml) 工作流。首次发布前，在仓库的 **Settings → Pages** 中将 Source 设为 **GitHub Actions**，然后从 Actions 页面选择 `main` 运行该工作流。它会读取 Pages 配置中的部署路径并发布到：
-
-`https://brucel017.github.io/markdown-workbench/`
-
 ## License
 
 本项目采用 [MIT License](LICENSE)。

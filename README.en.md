@@ -149,12 +149,6 @@ npm run test:e2e
 - Progressive enhancement: core reading and editing remain usable across browser capabilities
 - Safe saving: permissions, conflicts, unsaved state, and recovery outcomes remain visible
 
-## GitHub Pages
-
-The repository includes a manually triggered [Deploy to GitHub Pages](.github/workflows/deploy-pages.yml) workflow. Before the first deployment, set **Settings → Pages → Source** to **GitHub Actions**, then run the workflow from `main` on the Actions page. It reads the deployment base path from the Pages configuration and publishes to:
-
-`https://brucel017.github.io/markdown-workbench/`
-
 ## License
 
 This project is available under the [MIT License](LICENSE).
